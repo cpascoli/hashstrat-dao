@@ -1,24 +1,29 @@
 import { expect } from "chai";
 import { ethers, network } from "hardhat";
 
-import { constants, utils, Contract  } from "ethers"
-import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
+import { Contract  } from "ethers"
+import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 
 
 import abis from "./abis/abis.json";
-import { fromUsdc, toUsdc, fromWei, toWei, mineBlocks } from "./helpers";
+import { toWei, mineBlocks } from "./helpers";
 
 const usdcAddress = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'
 const usdcSource = '0xe7804c37c13166ff0b37f5ae0bb07a3aebb6e245' // rich account owing 48,354,222.149244  USDC
+const poolOwner = '0x4F888d90c31c97efA63f0Db088578BB6F9D1970C'
 
 
-describe("DAO", function () {
+describe("HashStratGovernor", function () {
 
 	async function deployGovernorFixture() {
 
 		const HashStratDAOToken = await ethers.getContractFactory("HashStratDAOToken");
 		const hashStratDAOToken = await HashStratDAOToken.deploy()
 		await hashStratDAOToken.deployed()
+
+		// set farm address to allow owner to mint tokens
+		const [owner] = await ethers.getSigners();
+		await hashStratDAOToken.setFarmAddress(owner.address)
 
 		// Deploy TimelockController without any proposers. 
 		// At deployment the deployer account receives an admin role that can be used to add a proposer later (see the TimelockController Roles docs section).
@@ -49,19 +54,37 @@ describe("DAO", function () {
 		// the existing usdc contract on the network
 		const usdc = new Contract(usdcAddress, abis["erc20"], ethers.provider)
 
+		const Treasury = await ethers.getContractFactory("Treasury");
+		const treasury = await Treasury.deploy(usdcAddress)
+		await treasury.deployed()
+
 		// DAO Operations
 		const DAOOperations = await ethers.getContractFactory("DAOOperations");
-		const daoOperations = await DAOOperations.deploy(usdc.address)
+		const daoOperations = await DAOOperations.deploy(usdc.address, treasury.address, ethers.constants.AddressZero) // don't need DivsDistributor
 		await daoOperations.deployed()
 
-		const poolAddresses = [pools.pool01.pool, pools.pool02.pool, pools.pool03.pool, pools.pool04.pool, pools.pool05.pool, pools.pool06.pool]
+		// DAOOperations should own Treasury
+		await treasury.transferOwnership(daoOperations.address)
+
+		const poolAddresses = [pools.pool01v3a.pool, pools.pool01v3a.pool, pools.pool01v3a.pool, pools.pool01v3a.pool, pools.pool01v3a.pool, pools.pool01v3a.pool]
 		await daoOperations.addPools(poolAddresses)
+
+		// // impersonate the owner of the Pools and transfer ownership to DAOOperations
+		// await network.provider.request({
+		// 	method: "hardhat_impersonateAccount",
+		// 	params: [poolOwner],
+		// });
+		// const signer = await ethers.getSigner(poolOwner);
+		// for (const poolAddress of poolAddresses) {
+		// 	const pool = new Contract(poolAddress, abis["poolV3"], ethers.provider)
+		// 	await pool.connect(signer).transferOwnership(daoOperations.address) 
+		// }
 
 		// HashStratTimelockController must own DAOOperations to execute DAOOperations onlyOwner functions
 		await daoOperations.transferOwnership(timelockController.address) 
 
 
-		return { hashStratDAOToken, timelockController, hashStratGovernor, daoOperations, usdc, timelockDelay };
+		return { hashStratDAOToken, timelockController, hashStratGovernor, daoOperations, treasury, usdc, timelockDelay };
 	}
 
 
@@ -113,16 +136,20 @@ describe("DAO", function () {
 		});
 
 
-		it("votes on a proposal", async function () {
+		it("pass a proposal if support votes pass the quorum", async function () {
 
-			const [ proposer, voter, recepient ] = await ethers.getSigners();
+			const [ owner, proposer, voter, recepient ] = await ethers.getSigners();
 			const { hashStratGovernor, hashStratDAOToken, daoOperations, usdc } = await loadFixture(deployGovernorFixture);
 
+			// voter delegates themselves
 			hashStratDAOToken.connect(voter).delegate(voter.address)
 
-			// transfer  tokens to voter
-			await hashStratDAOToken.transfer(voter.address, toWei('100000') )
-			
+			// mint some tokens to the owner
+			await hashStratDAOToken.connect(owner).mint( owner.address, toWei('9000') )
+
+			// mint some tokens to voter (just enough to pass the 10% quorum)
+			await hashStratDAOToken.connect(owner).mint( voter.address, toWei('1000') )
+
 			// Submit proposal
 			const transferCalldata = usdc.interface.encodeFunctionData('transfer', [recepient.address, 1000 * 10 ** 6]);
 			await hashStratGovernor.connect(proposer)["propose(address[],uint256[],bytes[],string)"] (
@@ -151,23 +178,67 @@ describe("DAO", function () {
 		});
 
 
-		it("executes a succesful proposal", async function () {
+		it("reject a proposal if support votes are below the quorum", async function () {
 
-			const [ proposer, voter, recepient ] = await ethers.getSigners();
-			const { hashStratGovernor, hashStratDAOToken, daoOperations, usdc, timelockDelay } = await loadFixture(deployGovernorFixture);
+			const [ owner, proposer, voter, recepient ] = await ethers.getSigners();
+			const { hashStratGovernor, hashStratDAOToken, daoOperations, usdc } = await loadFixture(deployGovernorFixture);
+
+			// voter delegates themselves
+			hashStratDAOToken.connect(voter).delegate(voter.address)
+
+			// mint some tokens to the owner
+			await hashStratDAOToken.connect(owner).mint( owner.address, toWei('9000') )
+
+			// mint some tokens to voter (not enough to pass the 10% quorum)
+			await hashStratDAOToken.connect(owner).mint( voter.address, toWei('999') )
+
+			// Submit proposal
+			const transferCalldata = usdc.interface.encodeFunctionData('transfer', [recepient.address, 1000 * 10 ** 6]);
+			await hashStratGovernor.connect(proposer)["propose(address[],uint256[],bytes[],string)"] (
+				[daoOperations.address],
+				[0],
+				[transferCalldata],
+				"Proposal #1: Transfer USDC to address"
+			);
+
+			// get proposal state by proposalId
+			const proposalId = await hashStratGovernor.hashProposal(
+				[daoOperations.address],
+				[0],
+				[transferCalldata],
+				ethers.utils.id("Proposal #1: Transfer USDC to address")  // hash of the proposal description
+			)
+
+			/// Vote for the proposal (Against: 0, For: 1, Abstain: 2)
+			await hashStratGovernor.connect(voter).castVote(proposalId, 1)
+			await mineBlocks(1000) // wait for the end of the proposal period
+
+			// verify the proposal has succeeded
+			const proposalState = await hashStratGovernor.state(proposalId)
+			const Failed = 3
+			expect( proposalState ).to.be.equal(Failed)
+		});
+
+
+		it("execute a succesful proposal", async function () {
+
+			const [ owner, proposer, voter, recepient ] = await ethers.getSigners();
+			const { hashStratGovernor, hashStratDAOToken, daoOperations, treasury, usdc } = await loadFixture(deployGovernorFixture);
 
 			hashStratDAOToken.connect(voter).delegate(voter.address)
 
-			// transfer  tokens to voter
-			await hashStratDAOToken.transfer(voter.address, toWei('100000') )
-			
+			// transfer some tokens to voter
+			await hashStratDAOToken.connect(owner).mint( voter.address, toWei('100000') )
+
 			// transfer USDC to daoOperations
 			const feesAmount = 1000 * 10 ** 6
-			await transferFunds( feesAmount, daoOperations.address )
+			await transferFunds( feesAmount, treasury.address )
 
 			// Submit proposal to transfer 1000 USDC from 'daoOperations' to 'recepient'
 			const description = "Proposal #1: Transfer USDC to recipient address"
-			const transferCalldata = daoOperations.interface.encodeFunctionData('transferFees', [recepient.address, feesAmount]);
+
+
+			const transferCalldata = daoOperations.interface.encodeFunctionData('transferFunds', [recepient.address, feesAmount]);
 			await hashStratGovernor.connect(proposer)["propose(address[],uint256[],bytes[],string)"] (
 				[daoOperations.address],
 				[0],
@@ -237,44 +308,43 @@ async function transferFunds(amount: number | string, recipient: string) {
 
 
 
+
 // Polygon Pools
 const pools = {
-
-	"pool01": {
-		"pool": "0x7b8b3fc7563689546217cFa1cfCEC2541077170f",
-		"pool_lp": "0x2EbF538B3E0F556621cc33AB5799b8eF089b2D8C",
-		"strategy": "0x6aa3D1CB02a20cff58B402852FD5e8666f9AD4bd",
+	"pool01v3a": {
+		"pool": "0x8714336322c091924495B08938E368Ec0d19Cc94",
+		"pool_lp": "0x49c3ad1bF4BeFb024607059cb851Eb793c224BaB",
+		"strategy": "0xbfB7A8caF44fD28188673B09aa3B2b00eF301118",
 		"price_feed": "0xc907E116054Ad103354f2D350FD2514433D57F6f"
 	},
-	"pool02": {
-		"pool": "0x62464FfFAe0120E662169922730d4e96b7A59700",
-		"pool_lp": "0x26b80F5970bC835751e2Aabf4e9Bc5B873713f17",
-		"strategy": "0xca5B24b63D929Ddd5856866BdCec17cf13bDB359",
+	"pool02v3a": {
+		"pool": "0xD963e4C6BE2dA88a1679A40139C5b75961cc2619",
+		"pool_lp": "0xC27E560E3D1546edeC5DD858D404EbaF2166A763",
+		"strategy": "0xc78BD1257b7fE3Eeb33fC824313C71D145C9754b",
 		"price_feed": "0xF9680D99D6C9589e2a93a78A04A279e509205945"
 	},
-	"pool03": {
-		"pool": "0xc60CE76892138d9E0cE722eB552C5d8DE70375a5",
-		"pool_lp": "0xe62A17b61e4E309c491F1BD26bA7BfE9e463610e",
-		"strategy": "0x46cfDDc7ab8348b44b4a0447F0e5077188c4ff14",
+	"pool03v3a": {
+		"pool": "0x63151e56140E09999983CcD8DD05927f9e8be81D",
+		"pool_lp": "0xCdf8886cEea718ad37e02e9a421Eb674F20e5ba1",
+		"strategy": "0x4687faf8e60ca8e532af3173C0225379939261F7",
 		"price_feed": "0xc907E116054Ad103354f2D350FD2514433D57F6f"
 	},
-	"pool04": {
-		"pool": "0x82314313829B7AF502f9D60a4f215F6b6aFbBE4B",
-		"pool_lp": "0xA9085698662029Ef6C21Bbb23a81d3eB55898926",
-		"strategy": "0x02CF4916Dd9f4bB329AbE5e043569E586fE006E4",
+	"pool04v3a": {
+		"pool": "0xd229428346E5Ba2F08AbAf52fE1d2C941ecB36AD",
+		"pool_lp": "0xe4FF896D756Bdd6aa1208CDf05844335aEA56297",
+		"strategy": "0xB98203780925694BAeAFDC7CB7C6ECb1E6631D17",
 		"price_feed": "0xF9680D99D6C9589e2a93a78A04A279e509205945"
 	},
-	"pool05": {
-		"pool": "0x742953942d6A3B005e28a451a0D613337D7767b2",
-		"pool_lp": "0x7EB471C4033dd8c25881e9c02ddCE0C382AE8Adb",
-		"strategy": "0x7F7a40fa461931f3aecD183f8B56b2782483B04B",
+	"pool05v3a": {
+		"pool": "0xCfcF4807d10C564204DD131527Ba8fEb08e2cc9e",
+		"pool_lp": "0x80bc0b435b7e7F0Dc3E95C3dEA87c68D5Ade4378",
+		"strategy": "0xBbe4786c0D1cEda012B8EC1ad12a2F7a1A5941f1",
 		"price_feed": "0xc907E116054Ad103354f2D350FD2514433D57F6f"
 	},
-	"pool06": {
-		"pool": "0x949e118A42D15Aa09d9875AcD22B87BB0E92EB40",
-		"pool_lp": "0x74243293f6642294d3cc94a9C633Ae943d557Cd3",
-		"strategy": "0x26311040c72f08EF1440B784117eb96EA20A2412",
+	"pool06v3a": {
+		"pool": "0xa2f3c0FDC55814E70Fdac2296d96bB04840bE132",
+		"pool_lp": "0x2523c4Ab54f5466A8b8eEBCc57D8edC0601faB54",
+		"strategy": "0x62386A92078CC4fEF921F9bb1f515464e2f7918f",
 		"price_feed": "0xF9680D99D6C9589e2a93a78A04A279e509205945"
 	},
-	
 }

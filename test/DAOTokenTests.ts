@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
+import { fromUsdc, toWei } from "./helpers";
 
 describe("HashStratDAOToken", function () {
 
@@ -26,13 +27,34 @@ describe("HashStratDAOToken", function () {
 			expect( await hashStratDAOToken.decimals() ).to.equal(18);
 		});
 
-		it("has total supply of 1000_000", async function () {
-			const supply = ethers.utils.parseEther('1000000');   // 1M tokens
+		it("has initial total supply of 0", async function () {
 			const { hashStratDAOToken } = await loadFixture(deployTokenFixture);
 	
-			expect( ethers.utils.formatUnits (await hashStratDAOToken.totalSupply()) ).to.equal('1000000.0');
+			expect( ethers.utils.formatUnits (await hashStratDAOToken.totalSupply()) ).to.equal('0.0');
+		});
+
+
+		it("can mint up to 1_000_000 tokens", async function () {
+			const { hashStratDAOToken } = await loadFixture(deployTokenFixture);
+			const [addr1, addr2] = await ethers.getSigners();
+			hashStratDAOToken.setFarmAddress(addr1.address)
+
+			await hashStratDAOToken.mint(addr2.address, toWei('1000000'))
+	
+			expect( ethers.utils.formatUnits(await hashStratDAOToken.totalSupply()) ).to.equal('1000000.0');
 		});
 	
+
+		it("reverts if trying to mint more than 1_000_000 tokens", async function () {
+			const { hashStratDAOToken } = await loadFixture(deployTokenFixture);
+
+			const [addr1, addr2] = await ethers.getSigners();
+			hashStratDAOToken.setFarmAddress(addr1.address)
+			await hashStratDAOToken.mint(addr2.address, toWei('1000000'))
+
+			await expect( hashStratDAOToken.mint(addr2.address, 1) ).to.be.revertedWith("ERC20Votes: total supply risks overflowing votes");
+		});
+		
 	});
 
 })

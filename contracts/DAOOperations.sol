@@ -3,80 +3,72 @@ pragma solidity ^0.8.14;
 
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@chainlink/contracts/src/v0.8/AutomationCompatible.sol";
 
 import "./IPoolV3.sol";
+import "./ITreasury.sol";
+import "./IDivsDistributor.sol";
 
-contract DAOOperations is Ownable {
+import "hardhat/console.sol";
+
+
+/**
+ * This contract implements the DAO functions executable via DAO proposals.
+ *
+ * The Owner of this contact should be HashStratTimelockController
+ * that will be the executor of all voted proposals.
+ */
+
+contract DAOOperations is Ownable, AutomationCompatibleInterface {
+
 
     // the addresses of LP tokens of the HashStrat Pools and Indexes supported
-    address[] internal poolsArray;
-    address[] internal poolLPTokensArray;
-
-    mapping(address => bool) internal enabledPools;
+    address[] poolsArray;
+    mapping(address => bool) enabledPools;
+    uint enabledPoolsCount;
 
     IERC20Metadata public feesToken;
+    ITreasury public treasury;
+    IDivsDistributor public divsDistributor;
 
     uint public totalFeesCollected;
     uint public totalFeesTransferred;
 
-    constructor(address feesTokenAddress) {
+    uint public immutable percPrecision = 4;
+
+    uint public divsPerc = 1000; // 100% of fees distributed as divs
+
+
+    constructor(address feesTokenAddress, address treasuryAddress, address divsDistributorAddress) {
+        treasury = ITreasury(treasuryAddress);
         feesToken = IERC20Metadata(feesTokenAddress);
+        divsDistributor = IDivsDistributor(divsDistributorAddress);
     }
 
 
     //// Public View function ////
 
-    function feesBalance() public view returns (uint) {
-        return feesToken.balanceOf(address(this));
-    }
-
-
-    function collectableFees() public view returns (uint) {
-        uint total = 0;
-        for (uint i = 0; i < poolsArray.length; i++) {
-            if (enabledPools[poolsArray[i]]) {
-                IPoolV3 pool = IPoolV3(poolsArray[i]);
-                total += pool.lpToken().balanceOf(address(pool));
-            }
-        }
-
-        return total;
-    }
-
-
+    //// Pools Management ////
     function getPools() external view returns (address[] memory) {
         return poolsArray;
     }
 
 
-    function getPoolLPTokens() external view returns (address[] memory) {
-        return poolLPTokensArray;
-    }
-
-  
-    //// Fees Management ////
-
-    function collectFees() external onlyOwner {
-
-        uint feesBefore = feesBalance();
+    function getEnabledPools() external view returns (address[] memory) {
+        address[] memory enabled = new address[] (enabledPoolsCount);
+        uint count = 0;
 
         for (uint i = 0; i < poolsArray.length; i++) {
-            if (enabledPools[poolsArray[i]]) {
-                IPoolV3 pool = IPoolV3(poolsArray[i]);
-                pool.collectFees(0, address(this)); // transfer lp tokens to DAOOperations
+            address poolAddress = poolsArray[i];
+            if (enabledPools[poolAddress] == true) {
+                enabled[count] = poolAddress;
+                count++;
             }
         }
 
-        uint collected = feesBalance() - feesBefore;
-        totalFeesCollected += collected;
+        return poolsArray;
     }
 
-    function approveFeeTransfer(address spender, uint amount) external onlyOwner {
-        feesToken.approve(spender, amount);
-    }
-
-
-    //// Pools Management ////
 
     function addPools(address[] memory poolAddresses) external onlyOwner {
 
@@ -85,7 +77,8 @@ contract DAOOperations is Ownable {
             if (enabledPools[poolAddress] == false) {
                 enabledPools[poolAddress] = true;
                 poolsArray.push(poolAddress);
-                poolLPTokensArray.push(address(IPoolV3(poolAddress).lpToken()));
+                treasury.addPool(poolAddress);
+                enabledPoolsCount++;
             }
         }
     }
@@ -96,21 +89,48 @@ contract DAOOperations is Ownable {
             address poolAddress = poolAddresses[i];
             if (enabledPools[poolAddress] == true) {
                 enabledPools[poolAddress] = false;
+                treasury.removePool(poolAddress);
+                enabledPoolsCount--;
             }
         }
     }
 
 
+    // Public functions
 
-    //// DAO operations
-    function transferFees(address to, uint amount) external onlyOwner {
-        uint feesAmount = amount == 0 ? feesToken.balanceOf(address (this)) : amount;
-
-        if (feesAmount > 0) {
-            totalFeesTransferred += feesAmount;
-            feesToken.transfer(to, feesAmount);
+    // Collect fees from all Pools and transfer them to the Treasury
+    function collectFees() public {
+        for (uint i = 0; i < poolsArray.length; i++) {
+            if (enabledPools[poolsArray[i]]) {
+                IPoolV3 pool = IPoolV3(poolsArray[i]);
+                uint before = feesToken.balanceOf(address(this));
+                pool.collectFees(0); // withdraw fees from pool to this contract
+                uint collectedAmount = feesToken.balanceOf(address(this)) - before;
+                if (collectedAmount > 0) {
+                    feesToken.transfer(address(treasury), collectedAmount);
+                }
+            }
         }
     }
+
+
+    //// DAO operations
+
+    function transferFunds(address to, uint amount) external onlyOwner {
+        require (amount <= feesToken.balanceOf(address(treasury)) , "Excessive amount");
+        if (amount > 0) {
+            totalFeesTransferred += amount;
+            treasury.transferFunds(to, amount);
+        }
+    }
+
+
+    function setDivsPerc(uint divsPercentage) external onlyOwner {
+        require(divsPercentage >= 0 && divsPercentage <= (10 ** percPrecision), "invalid percentage");
+        
+        divsPerc = divsPercentage;
+    }
+
 
     function setFeesPerc(address poolAddress, uint feesPerc) external onlyOwner {
         IPoolV3(poolAddress).setFeesPerc(feesPerc);
@@ -132,5 +152,30 @@ contract DAOOperations is Ownable {
     }
 
 
+    //// AutomationCompatible
+    function checkUpkeep(bytes calldata /* checkData */) external view override returns (bool upkeepNeeded, bytes memory performData) {
+        upkeepNeeded = divsDistributor.canCreateNewDistributionInterval();
+    }
+
+
+    // Transfer new fees from Pools to Treasury and create a new distribution interval
+    function performUpkeep(bytes calldata /* performData */) external override {
+        
+        if ( divsDistributor.canCreateNewDistributionInterval() ) {
+            
+            // transfer new fees from pools to the Treasury
+            collectFees();
+            uint trasuryBalance = feesToken.balanceOf(address(treasury));
+
+            uint feesToDistribute = trasuryBalance * divsPerc / 10 ** percPrecision;
+            if (feesToDistribute > 0) {
+                treasury.transferFunds(address(divsDistributor), feesToDistribute);
+            }
+            // if there re divs to distribute, create a new distribution interval
+            if (feesToken.balanceOf(address(divsDistributor)) > 0) {
+                divsDistributor.addDistributionInterval();
+            }
+        }
+    }
 
 }

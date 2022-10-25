@@ -24,7 +24,7 @@ const config: HardhatUserConfig = {
     hardhat: {
       forking: {
         url: RPC_URL_POLYGON_MAIN || "",
-        blockNumber:  34299625
+        blockNumber: 34745600 // 34740813 // 34661181 // 34551779 // 34299625
       }
     },
     goerli: {
@@ -34,7 +34,7 @@ const config: HardhatUserConfig = {
     polygon: {
       url: RPC_URL_POLYGON_MAIN,
       accounts: { mnemonic: MNEMONIC  },
-      gasPrice:  50000000000,  // 50 Gwei
+      gasPrice:  120000000000,  // 120 Gwei
     },
   },
   etherscan: {

@@ -12,8 +12,10 @@
   "author": "cpascoli",
   "license": "MIT",
   "dependencies": {
+    "@chainlink/contracts": "^0.5.1",
     "@openzeppelin/contracts": "^4.7.2",
     "dotenv": "^16.0.1",
+    "ethers": "^5.5.4",
     "hardhat-abi-exporter": "^2.10.0",
     "hardhat-contract-sizer": "^2.6.1"
   },

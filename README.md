@@ -1,19 +1,20 @@
 # HashStrat Governance
 
-This repo constains the Solidity smart contracts for HashStrat DAO. 
-This includes:
-- HashStrat DAO Token (HST)
-- HashStrat DAO Token Farm 
-- Governance contracts
-- DAO Operations
-- Fee farming 
+This repo constains the Solidity smart contracts for HashStrat DAO:
+
+- HashStrat DAO Token (HST) (HashStratDAOToken.sol)
+- HST Token Farm (HashStratDAOTokenFarm.sol)
+- Protocol Dividends Distribution (DivsDistributor.sol)
+- Governance (HashStratGovernor.sol, HashStratTimelockController.sol)
+- DAO Operations (DAOOperations.sol)
+- Treasury (Treasury.sol)
+
 
 
 ## HashStrat DAO Token (HST)
 
 The token of the HashStrat DAP. 
 A standard ERC20 token, non mintable, with limited supply of 1M.
-
 
 
 ## HashStrat DAO Token Farm
