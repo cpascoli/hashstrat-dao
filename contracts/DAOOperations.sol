@@ -8,8 +8,7 @@ import "@chainlink/contracts/src/v0.8/AutomationCompatible.sol";
 import "./IPoolV3.sol";
 import "./ITreasury.sol";
 import "./IDivsDistributor.sol";
-
-import "hardhat/console.sol";
+import "./IHashStratDAOTokenFarm.sol";
 
 
 /**
@@ -22,6 +21,13 @@ import "hardhat/console.sol";
 contract DAOOperations is Ownable, AutomationCompatibleInterface {
 
 
+    uint public immutable PERC_DECIMALS = 4;
+    uint public immutable MAX_POOL_FEE_PERC = 500; // 5% max fee
+
+    uint public divsPerc = 1000; // 100% fees distributed as divs
+    uint public totalFeesCollected;
+    uint public totalFeesTransferred;
+
     // the addresses of LP tokens of the HashStrat Pools and Indexes supported
     address[] poolsArray;
     mapping(address => bool) enabledPools;
@@ -30,19 +36,21 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
     IERC20Metadata public feesToken;
     ITreasury public treasury;
     IDivsDistributor public divsDistributor;
-
-    uint public totalFeesCollected;
-    uint public totalFeesTransferred;
-
-    uint public immutable percPrecision = 4;
-
-    uint public divsPerc = 1000; // 100% of fees distributed as divs
+    IHashStratDAOTokenFarm public tokenFarm;
 
 
-    constructor(address feesTokenAddress, address treasuryAddress, address divsDistributorAddress) {
+    constructor(
+        address feesTokenAddress, 
+        address treasuryAddress, 
+        address divsDistributorAddress,
+        address tokenFarmAddress
+
+        ) {
+
         treasury = ITreasury(treasuryAddress);
         feesToken = IERC20Metadata(feesTokenAddress);
         divsDistributor = IDivsDistributor(divsDistributorAddress);
+        tokenFarm = IHashStratDAOTokenFarm(tokenFarmAddress);
     }
 
 
@@ -57,7 +65,6 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
     function getEnabledPools() external view returns (address[] memory) {
         address[] memory enabled = new address[] (enabledPoolsCount);
         uint count = 0;
-
         for (uint i = 0; i < poolsArray.length; i++) {
             address poolAddress = poolsArray[i];
             if (enabledPools[poolAddress] == true) {
@@ -72,31 +79,42 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
 
     function addPools(address[] memory poolAddresses) external onlyOwner {
 
+        address[] memory lptokenAddresses = new address[](poolAddresses.length);
+
         for (uint i = 0; i<poolAddresses.length; i++) {
             address poolAddress = poolAddresses[i];
             if (enabledPools[poolAddress] == false) {
                 enabledPools[poolAddress] = true;
                 poolsArray.push(poolAddress);
-                treasury.addPool(poolAddress);
+
+                lptokenAddresses[i] = address(IPoolV3(poolAddress).lpToken());
                 enabledPoolsCount++;
             }
         }
+
+        tokenFarm.addLPTokens(lptokenAddresses);
     }
 
 
     function removePools(address[] memory poolAddresses) external onlyOwner {
+
+        address[] memory lptokenAddresses = new address[](poolAddresses.length);
+
         for (uint i = 0; i<poolAddresses.length; i++) {
             address poolAddress = poolAddresses[i];
             if (enabledPools[poolAddress] == true) {
                 enabledPools[poolAddress] = false;
-                treasury.removePool(poolAddress);
+                
+                lptokenAddresses[i] = address(IPoolV3(poolAddress).lpToken());
                 enabledPoolsCount--;
             }
         }
+
+        tokenFarm.removeLPTokens(lptokenAddresses);
     }
 
 
-    // Public functions
+    //// Public functions
 
     // Collect fees from all Pools and transfer them to the Treasury
     function collectFees() public {
@@ -104,14 +122,31 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
             if (enabledPools[poolsArray[i]]) {
                 IPoolV3 pool = IPoolV3(poolsArray[i]);
                 uint before = feesToken.balanceOf(address(this));
-                pool.collectFees(0); // withdraw fees from pool to this contract
+                pool.collectFees(0);  // withdraw fees in (stable asset) from pool to this contract
                 uint collectedAmount = feesToken.balanceOf(address(this)) - before;
                 if (collectedAmount > 0) {
+                    totalFeesCollected += collectedAmount;
                     feesToken.transfer(address(treasury), collectedAmount);
                 }
             }
         }
     }
+
+
+    // Returns the value of the LP tokens held in the pools
+    function collectableFees() public view returns (uint) {
+        uint total = 0;
+        for (uint i = 0; i < poolsArray.length; i++) {
+            if (enabledPools[poolsArray[i]]) {
+                IPoolV3 pool = IPoolV3(poolsArray[i]);
+                uint feeValue = pool.portfolioValue(address(pool));
+                total += feeValue;
+            }
+        }
+
+        return total;
+    }
+
 
 
     //// DAO operations
@@ -126,13 +161,15 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
 
 
     function setDivsPerc(uint divsPercentage) external onlyOwner {
-        require(divsPercentage >= 0 && divsPercentage <= (10 ** percPrecision), "invalid percentage");
+        require(divsPercentage >= 0 && divsPercentage <= (10 ** PERC_DECIMALS), "invalid percentage");
         
         divsPerc = divsPercentage;
     }
 
 
     function setFeesPerc(address poolAddress, uint feesPerc) external onlyOwner {
+        require(feesPerc <= MAX_POOL_FEE_PERC, "Fee percentage too high");
+
         IPoolV3(poolAddress).setFeesPerc(feesPerc);
     }
 
@@ -167,7 +204,7 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
             collectFees();
             uint trasuryBalance = feesToken.balanceOf(address(treasury));
 
-            uint feesToDistribute = trasuryBalance * divsPerc / 10 ** percPrecision;
+            uint feesToDistribute = trasuryBalance * divsPerc / 10 ** PERC_DECIMALS;
             if (feesToDistribute > 0) {
                 treasury.transferFunds(address(divsDistributor), feesToDistribute);
             }

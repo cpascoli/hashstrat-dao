@@ -5,7 +5,6 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/draft-ERC20Permit.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 
-import "hardhat/console.sol";
 
 /**
  * The token of the HashStrat DAO
@@ -42,13 +41,26 @@ contract HashStratDAOToken is ERC20, ERC20Permit, ERC20Votes {
         farmAddress = _farmAddress;
     }
 
+
     function maxSupply() external view returns (uint) {
         return _maxSupply();
     }
 
+
+    function autoDelegate() external {
+        super._delegate(msg.sender, msg.sender);
+    }
+
+
+    function delegate(address delegator, address delegatee) public onlyFarm {
+        super._delegate(delegator, delegatee);
+    }
+
+
     function mint(address to, uint256 amount) public onlyFarm {
         _mint(to, amount);
     }
+
 
     function _afterTokenTransfer(address from, address to, uint256 amount) internal override(ERC20, ERC20Votes) {
         super._afterTokenTransfer(from, to, amount);
@@ -58,12 +70,13 @@ contract HashStratDAOToken is ERC20, ERC20Permit, ERC20Votes {
         super._mint(to, amount);
     }
 
+
     function _burn(address account, uint256 amount) internal override(ERC20, ERC20Votes) {
         super._burn(account, amount);
     }
+    
 
     function _maxSupply() internal view override returns (uint224) {
         return MAX_SUPPLY;
     }
-
 }

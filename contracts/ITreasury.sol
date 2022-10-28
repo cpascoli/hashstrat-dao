@@ -5,7 +5,4 @@ interface ITreasury {
 
     function getBalance() external view returns (uint);
     function transferFunds(address to, uint amount) external;
-
-    function addPool(address poolAddress) external;
-    function removePool(address poolAddress) external;
 }

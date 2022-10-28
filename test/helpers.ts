@@ -28,9 +28,8 @@ export const fromUsdc = (v: BigNumber) => {
     return Number(ethers.utils.formatUnits(v , 'mwei'))
 }
 
-export const toUsdc = (v: number) => {
-    return ethers.utils.formatUnits(v, "mwei");
-   
+export const toUsdc = (value: string) => {
+    return ethers.utils.parseUnits(value, 'mwei')
 }
 
 
@@ -42,5 +41,5 @@ export async function waitDays(days: number) {
 
 
 export async function mineBlocks(blocks: number) {
-     await network.provider.send("hardhat_mine", ['0x' + blocks.toString(16) ] );
+    await network.provider.send("hardhat_mine", ['0x' + blocks.toString(16) ] );
 }

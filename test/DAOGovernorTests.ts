@@ -58,27 +58,25 @@ describe("HashStratGovernor", function () {
 		const treasury = await Treasury.deploy(usdcAddress)
 		await treasury.deployed()
 
+		const HashStratDAOTokenFarm = await ethers.getContractFactory("HashStratDAOTokenFarm")
+		const hashStratDAOTokenFarm = await HashStratDAOTokenFarm.deploy(hashStratDAOToken.address)
+		await hashStratDAOTokenFarm.deployed();
+
+		const DivsDistributor = await ethers.getContractFactory("DivsDistributor");
+		const divsDistributor = await DivsDistributor.deploy(usdcAddress, hashStratDAOToken.address)
+		await divsDistributor.deployed()
+
 		// DAO Operations
 		const DAOOperations = await ethers.getContractFactory("DAOOperations");
-		const daoOperations = await DAOOperations.deploy(usdc.address, treasury.address, ethers.constants.AddressZero) // don't need DivsDistributor
+		const daoOperations = await DAOOperations.deploy(usdc.address, treasury.address, divsDistributor.address, hashStratDAOTokenFarm.address) // don't need DivsDistributor
 		await daoOperations.deployed()
 
-		// DAOOperations should own Treasury
+		// DAOOperations should own HashStratDAOTokenFarm and Treasury
 		await treasury.transferOwnership(daoOperations.address)
+		await hashStratDAOTokenFarm.transferOwnership(daoOperations.address)
 
 		const poolAddresses = [pools.pool01v3a.pool, pools.pool01v3a.pool, pools.pool01v3a.pool, pools.pool01v3a.pool, pools.pool01v3a.pool, pools.pool01v3a.pool]
 		await daoOperations.addPools(poolAddresses)
-
-		// // impersonate the owner of the Pools and transfer ownership to DAOOperations
-		// await network.provider.request({
-		// 	method: "hardhat_impersonateAccount",
-		// 	params: [poolOwner],
-		// });
-		// const signer = await ethers.getSigner(poolOwner);
-		// for (const poolAddress of poolAddresses) {
-		// 	const pool = new Contract(poolAddress, abis["poolV3"], ethers.provider)
-		// 	await pool.connect(signer).transferOwnership(daoOperations.address) 
-		// }
 
 		// HashStratTimelockController must own DAOOperations to execute DAOOperations onlyOwner functions
 		await daoOperations.transferOwnership(timelockController.address) 
@@ -142,7 +140,7 @@ describe("HashStratGovernor", function () {
 			const { hashStratGovernor, hashStratDAOToken, daoOperations, usdc } = await loadFixture(deployGovernorFixture);
 
 			// voter delegates themselves
-			hashStratDAOToken.connect(voter).delegate(voter.address)
+			hashStratDAOToken.connect(voter).autoDelegate()
 
 			// mint some tokens to the owner
 			await hashStratDAOToken.connect(owner).mint( owner.address, toWei('9000') )
@@ -184,7 +182,7 @@ describe("HashStratGovernor", function () {
 			const { hashStratGovernor, hashStratDAOToken, daoOperations, usdc } = await loadFixture(deployGovernorFixture);
 
 			// voter delegates themselves
-			hashStratDAOToken.connect(voter).delegate(voter.address)
+			hashStratDAOToken.connect(voter).autoDelegate()
 
 			// mint some tokens to the owner
 			await hashStratDAOToken.connect(owner).mint( owner.address, toWei('9000') )
@@ -225,7 +223,7 @@ describe("HashStratGovernor", function () {
 			const [ owner, proposer, voter, recepient ] = await ethers.getSigners();
 			const { hashStratGovernor, hashStratDAOToken, daoOperations, treasury, usdc } = await loadFixture(deployGovernorFixture);
 
-			hashStratDAOToken.connect(voter).delegate(voter.address)
+			hashStratDAOToken.connect(voter).autoDelegate()
 
 			// transfer some tokens to voter
 			await hashStratDAOToken.connect(owner).mint( voter.address, toWei('100000') )

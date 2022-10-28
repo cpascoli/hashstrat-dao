@@ -19,14 +19,14 @@ describe("HashStratDAOTokenFarm", function () {
 
 	async function deployTokenAndFarm() {
 
-		const HashStratDAOToken = await ethers.getContractFactory("HashStratDAOToken")
-		const HashStratDAOTokenFarm = await ethers.getContractFactory("HashStratDAOTokenFarm")
 
 		// Deploy HST token
+		const HashStratDAOToken = await ethers.getContractFactory("HashStratDAOToken")
 		const hashStratDAOToken = await HashStratDAOToken.deploy()
 		await hashStratDAOToken.deployed()
 
 		// Deploy Farm
+		const HashStratDAOTokenFarm = await ethers.getContractFactory("HashStratDAOTokenFarm")
 		const hashStratDAOTokenFarm = await HashStratDAOTokenFarm.deploy(hashStratDAOToken.address)
 		await hashStratDAOTokenFarm.deployed();
 
@@ -34,8 +34,10 @@ describe("HashStratDAOTokenFarm", function () {
 		await hashStratDAOToken.setFarmAddress(hashStratDAOTokenFarm.address)
 
 		// add supported LP tokens to Farm
-		await addLPTokens(hashStratDAOTokenFarm)
+		const lpaddresses = getPoolLPTokenAddreses()
+		await hashStratDAOTokenFarm.addLPTokens(lpaddresses)
 
+	
 		// add reward phases to Farm
 		await hashStratDAOTokenFarm.addRewardPeriods()
 
@@ -48,21 +50,19 @@ describe("HashStratDAOTokenFarm", function () {
 
 
 
-	// You can nest describe calls to create subsections.
-	describe("HashStratDAOTokenFarm", function () {
+	describe("Farm configuration", function () {
 
-		it("Farm should have 6 LP tokens addresses", async function () {
+		it("Farm should have 9 LP tokens addresses", async function () {
 			const { hashStratDAOTokenFarm } = await loadFixture(deployTokenAndFarm);
 
-			expect((await hashStratDAOTokenFarm.getLPTokens()).length).to.equal(6);
+			expect((await hashStratDAOTokenFarm.getLPTokens()).length).to.equal(9);
 		});
 
 
-		it("Farm should have 10 reward periods", async function () {
+		it("Farm should have 10 distribution intervals", async function () {
 			const { hashStratDAOTokenFarm } = await loadFixture(deployTokenAndFarm);
 
 			expect(await hashStratDAOTokenFarm.rewardPeriodsCount()).to.equal(10);
-			
 		});
 
 		it("The total amount of tokens distributed should be the token max supply", async function () {
@@ -77,6 +77,45 @@ describe("HashStratDAOTokenFarm", function () {
 
 			expect(totalReward).to.equal(maxSupply);
 		});
+
+	});
+
+
+
+	describe("Token distribution", function () {
+
+		it(`Given a user,
+		when they farm some tokens and they are not set as delegate,
+		then they should become the delegate of the tokens' votes`, async function () {
+
+			const [addr1] = await ethers.getSigners();
+			const { usdc, hashStratDAOTokenFarm, hashStratDAOToken, pool1, pool1LP } = await loadFixture(deployTokenAndFarm);
+			const amount = 100 * 10 ** 6
+			await transferFunds(amount, addr1.address)
+
+			// Deposit USDC in pool and stake LP
+			const lpstaked = await depositAndStake(addr1, amount, usdc, pool1, pool1LP, hashStratDAOTokenFarm)
+
+			expect(lpstaked).to.be.equal(await hashStratDAOTokenFarm.getStakedLP(addr1.address))
+
+			// Wait 30 days
+			await waitDays(30)
+
+			// claimable tokens after 1 year
+			const claimableRewardAddr1 = fromWei(await hashStratDAOTokenFarm.claimableReward(addr1.address))
+			expect(claimableRewardAddr1).to.be.approximately(500_000 * 30 / 365, 1);
+
+			// no tokens farmed & no delegate
+			expect( await hashStratDAOToken.balanceOf(addr1.address) ).to.be.equal(0);
+			expect( await hashStratDAOToken.delegates(addr1.address) ).to.be.equal( ethers.constants.AddressZero );
+
+			// addr1 end stake and receive some tokens
+			await hashStratDAOTokenFarm.connect(addr1).endStake(pool1LP.address, lpstaked)
+
+			// verify tokens were received by addr1 and he is the delegate
+			expect( await hashStratDAOToken.balanceOf(addr1.address) ).to.be.greaterThan( 0 )
+			expect( await hashStratDAOToken.delegates(addr1.address) ).to.be.equal( addr1.address );
+		})
 
 
 		it(`Given One user,
@@ -135,7 +174,6 @@ describe("HashStratDAOTokenFarm", function () {
 		})
 
 
-
 		it(`Given Two users,
 		when they stake the same amount for the entire reward period, 
 		then they should receive half of the available reward in the period`, async function () {
@@ -158,8 +196,8 @@ describe("HashStratDAOTokenFarm", function () {
 			const claimableRewardAddr1 = fromWei(await hashStratDAOTokenFarm.claimableReward(addr1.address))
 			const claimableRewardAddr2 = fromWei(await hashStratDAOTokenFarm.claimableReward(addr2.address))
 
-			expect(claimableRewardAddr1).to.be.approximately(250_000, 150);
-			expect(claimableRewardAddr2).to.be.approximately(250_000, 150);
+			expect(claimableRewardAddr1).to.be.approximately(250_000, 200);
+			expect(claimableRewardAddr2).to.be.approximately(250_000, 200);
 
 			// addr1, addr2 end stake
 			await hashStratDAOTokenFarm.connect(addr1).endStakeAndWithdraw(pool1LP.address, lpstaked1)
@@ -169,7 +207,7 @@ describe("HashStratDAOTokenFarm", function () {
 			const tokensFarmed2 = fromWei(await hashStratDAOToken.balanceOf(addr2.address))
 
 			// users should have farmed approximately the same amount of tokens
-			expect(tokensFarmed1).to.be.approximately(tokensFarmed2, 300);
+			expect(tokensFarmed1).to.be.approximately(tokensFarmed2, 400);
 
 			// users should have farmed approximately half od the available tokens
 			expect(tokensFarmed1).to.be.approximately(250_000, 150);
@@ -230,7 +268,6 @@ describe("HashStratDAOTokenFarm", function () {
 		});
 
 
-
 		it(`Given Two users, 
 		when they stake some LP tokens for different, overlapping intervals over the same reward period, 
 		then they should receive a reward that is proportional to the amount of tokens staked and the duration of their stakes`, async function () {
@@ -274,8 +311,8 @@ describe("HashStratDAOTokenFarm", function () {
 
 
 			// users should have farmed approximately half od the available tokens
-			expect(tokensFarmed1).to.be.approximately(expectedFarmed1, 100);
-			expect(tokensFarmed2).to.be.approximately(expectedFarmed2, 100);
+			expect(tokensFarmed1).to.be.approximately(expectedFarmed1, 200);
+			expect(tokensFarmed2).to.be.approximately(expectedFarmed2, 200);
 
 		});
 
@@ -395,6 +432,10 @@ describe("HashStratDAOTokenFarm", function () {
 
 	});
 
+
+
+
+
 });
 
 
@@ -435,12 +476,6 @@ async function transferFunds(amount: number, recipient: string) {
 }
 
 
-const addLPTokens = async (hashStratDAOTokenFarm: Contract) => {
-	for (const lpaddress of getPoolLPTokenAddreses()) {
-		// console.log(">>> adding LP Address to hashStratDAOTokenFarm: ", lpaddress)
-		await hashStratDAOTokenFarm.addLPToken(lpaddress)
-	}
-}
 
 
 const getPoolLPTokenAddreses = (): string[] => {
@@ -454,6 +489,21 @@ const getPoolLPTokenAddreses = (): string[] => {
 
 // Polygon Pools
 const pools = {
+
+	"index01v3a": {
+		"pool": "0xE61bA2eF1057dD90aAF9f021Fdf24F6B57D902AF",
+		"pool_lp": "0x0560Dd521787e27126B93E98568002A3ef84E36c"
+	},
+	"index02v3a": {
+		"pool": "0x1FB4fa664648a458c81A6fFDC7b3c7120CEb4E45",
+		"pool_lp": "0x8A8dD5a0d50887D16303460ee00CB311D255b034"
+	},
+	"index03v3a": {
+		"pool": "0xe0B5AfF7821bbABd48429D2B956A1202e3BA9b42",
+		"pool_lp": "0x9D91628be9BA8B024644fF612d013956C7ADa928"
+	},
+
+
 	"pool01v3": {
 		"pool": "0xb7BB83e1c826a8945652434DCf1758B46d6A5120",
 		"pool_lp": "0xF87c6838EAD55f40B7d3038FBbb1287767898EeB",

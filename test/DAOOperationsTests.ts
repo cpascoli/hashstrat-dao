@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { constants, utils, Contract } from "ethers"
+import { constants, utils, Contract, BigNumber } from "ethers"
 import { ethers, network } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { fromUsdc, toUsdc, round } from "./helpers"
@@ -15,7 +15,7 @@ const poolOwner = '0x4F888d90c31c97efA63f0Db088578BB6F9D1970C'
 describe("DAOOperations", function () {
 
 
-	async function deployTreasuryFixture() {
+	async function deployDAOOperationsFixture() {
 
 		const Treasury = await ethers.getContractFactory("Treasury");
 		const treasury = await Treasury.deploy(usdcAddress)
@@ -25,55 +25,52 @@ describe("DAOOperations", function () {
 		const hashStratDAOToken = await HashStratDAOToken.deploy()
 		await hashStratDAOToken.deployed()
 
-		// address feesTokenAddress, address hstTokenAddress
 		const DivsDistributor = await ethers.getContractFactory("DivsDistributor");
 		const divsDistributor = await DivsDistributor.deploy(usdcAddress, hashStratDAOToken.address)
 		await divsDistributor.deployed()
 
+		const HashStratDAOTokenFarm = await ethers.getContractFactory("HashStratDAOTokenFarm")
+		const hashStratDAOTokenFarm = await HashStratDAOTokenFarm.deploy(hashStratDAOToken.address)
+		await hashStratDAOTokenFarm.deployed();
+
 		// DAO Operations
 		const DAOOperations = await ethers.getContractFactory("DAOOperations");
-		const daoOperations = await DAOOperations.deploy(usdcAddress, treasury.address, divsDistributor.address) // don't need to pass Treasury address
+		const daoOperations = await DAOOperations.deploy(usdcAddress, treasury.address, divsDistributor.address, hashStratDAOTokenFarm.address)
 		await daoOperations.deployed()
 	
-		// DAOOperations should own Treasury
+		// DAOOperations should own Treasury and hashStratDAOTokenFarm
 		await treasury.transferOwnership(daoOperations.address)
+		await hashStratDAOTokenFarm.transferOwnership(daoOperations.address)
 
-		// add existing Pools to DAOOperations 
+		// Add existing Pools to DAOOperations 
 		const poolAddresses = [pools.pool01v3a.pool, pools.pool02v3a.pool, pools.pool03v3a.pool, pools.pool04v3a.pool, pools.pool05v3a.pool, pools.pool06v3a.pool]
 		await daoOperations.addPools(poolAddresses)
 
-		// impersonate the owner of the Pools and transfer ownership to DAOOperations
-		await network.provider.request({
-			method: "hardhat_impersonateAccount",
-			params: [poolOwner],
-		});
-		const signer = await ethers.getSigner(poolOwner);
-		for (const poolAddress of poolAddresses) {
-			const pool = new Contract(poolAddress, abis["poolV3"], ethers.provider)
-			await pool.connect(signer).transferOwnership(daoOperations.address) 
-		}
+		const usdc = new Contract(usdcAddress, abis["erc20"], ethers.provider)
 
-		return { treasury, daoOperations };
+		await transferPoolsOwnership(poolAddresses, daoOperations.address)
+
+		return { treasury, daoOperations, hashStratDAOTokenFarm, usdc };
 	}
 
 
 
-	describe("#PoolManagement", function () {
+	describe("Pools Management", function () {
 
 		it("should own its pools", async function () {
-			const { treasury, daoOperations } = await loadFixture(deployTreasuryFixture);
+			const { daoOperations } = await loadFixture(deployDAOOperationsFixture);
 
 			for (const poolAddress of await daoOperations.getPools()) {
 				const pool = new Contract(poolAddress, abis["poolV3"], ethers.provider)
 				// const poolOwner = await pool.owner()
 				//console.log(poolAddress, ">> pool ownner: ", poolOwner, "daoOperations: ", daoOperations.address)
 
-				expect ( await pool.owner() ).to.be.equal( daoOperations.address )
+				expect ( await pool.owner() ).to.be.equals( daoOperations.address )
 			}
 		})
 
 		it("should add pool when called by owner", async function () {
-			const { daoOperations } = await loadFixture(deployTreasuryFixture);
+			const { daoOperations, hashStratDAOTokenFarm } = await loadFixture(deployDAOOperationsFixture);
 			const [ owner ] = await ethers.getSigners();
 
 			// add new pool
@@ -83,10 +80,12 @@ describe("DAOOperations", function () {
 
 			expect( pools ).to.contain(pool);
 
+			const poolLP = '0x326A17829A9DCA987ae14448Dec7148552f05C22'
+			expect( await hashStratDAOTokenFarm.getLPTokens() ).contains( poolLP )
 		});
 
 		it("should revert when add pool is called by non owner", async function () {
-			const { daoOperations } = await loadFixture(deployTreasuryFixture);
+			const { daoOperations } = await loadFixture(deployDAOOperationsFixture);
 			const pools = await daoOperations.getPools()
 			const [ owner, other ] = await ethers.getSigners();
 
@@ -96,9 +95,93 @@ describe("DAOOperations", function () {
 		});
 	});
 
+
+
+	describe("#collectableFees", function () {
+
+		it("should return the fees amount when there are LP in the pools", async function () {
+			const { daoOperations } = await loadFixture(deployDAOOperationsFixture);
+
+			const [ poolAddr ] = await daoOperations.getPools()
+			const pool = new Contract(poolAddr, abis["poolV3"], ethers.provider)
+
+			const poolTotalValue = await pool.totalValue()
+			const lptoken = new Contract(pool.lpToken(), abis["erc20"], ethers.provider)
+
+			// verify the Treasury received the expected fees
+			const poolLPBalance = await lptoken.balanceOf(pool.address)
+			expect( poolLPBalance ).to.be.greaterThan( 0 )
+
+			const lpTotalSupply = await lptoken.totalSupply()
+			const expectedFeesCollected = BigNumber.from(round( poolTotalValue * poolLPBalance / lpTotalSupply, 0))
+
+			expect( fromUsdc(await daoOperations.collectableFees()) ).to.be.approximately( fromUsdc(expectedFeesCollected), 0.01 )
+		});
+	});
+
+	describe("#collectFees", function () {
+
+		it("should collect fees from pools and transfer the to Treasury", async function () {
+			const { treasury, daoOperations, usdc } = await loadFixture(deployDAOOperationsFixture)
+
+			const balanceBefore =  await usdc.balanceOf(treasury.address)
+			await daoOperations.collectFees()
+
+			const balanceAfter =  await usdc.balanceOf(treasury.address)
+
+			expect( balanceAfter ).to.be.greaterThan( balanceBefore )
+			
+		});
+	});
+
+	describe("#transferFunds", function () {
+
+		it("should transfer funds from the Treasury to the destination address", async function () {
+			const { treasury, daoOperations, usdc } = await loadFixture(deployDAOOperationsFixture)
+
+			const [ _, addr1, addr2 ] = await ethers.getSigners();
+
+			await transferFunds( toUsdc('100').toString() , treasury.address)
+			const balanceBefore =  await usdc.balanceOf(addr2.address)
+
+			await daoOperations.transferFunds(addr2.address, toUsdc('100'))
+
+			expect( (await usdc.balanceOf(addr2.address)).sub(balanceBefore) ).to.be.equal( toUsdc('100') )
+			
+		});
+	});
+
+	
 });
 
 
+async function transferPoolsOwnership(poolAddresses: string[], to: string) {
+
+	// impersonate the owner of the Pools and transfer ownership to DAOOperations
+	await network.provider.request({
+		method: "hardhat_impersonateAccount",
+		params: [poolOwner],
+	});
+	const signer = await ethers.getSigner(poolOwner);
+	// const poolAddresses = [pools.pool01v3a.pool, pools.pool02v3a.pool, pools.pool03v3a.pool, pools.pool04v3a.pool, pools.pool05v3a.pool, pools.pool06v3a.pool]
+	for (const poolAddress of poolAddresses) {
+		const pool = new Contract(poolAddress, abis["poolV3"], ethers.provider)
+		await pool.connect(signer).transferOwnership(to) 
+	}
+}
+
+async function transferFunds(amount: number | string, recipient: string) {
+
+	const usdc = new Contract(usdcAddress, abis["erc20"], ethers.provider)
+
+	// impersonate 'account'
+	await network.provider.request({
+		method: "hardhat_impersonateAccount",
+		params: [usdcSource],
+	});
+	const signer = await ethers.getSigner(usdcSource);
+	await usdc.connect(signer).transfer(recipient, amount)
+}
 
 // Polygon Pools
 const pools = {
@@ -141,18 +224,3 @@ const pools = {
 
 }
 
-
-
-
-async function transferFunds(amount: number | string, recipient: string) {
-
-	const usdc = new Contract(usdcAddress, abis["erc20"], ethers.provider)
-
-	// impersonate 'account'
-	await network.provider.request({
-		method: "hardhat_impersonateAccount",
-		params: [usdcSource],
-	});
-	const signer = await ethers.getSigner(usdcSource);
-	await usdc.connect(signer).transfer(recipient, amount)
-}

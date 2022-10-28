@@ -8,7 +8,6 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 import "./StakingPool.sol";
 import "./IHashStratDAOToken.sol";
 
-import "hardhat/console.sol";
 
 /**
  * A Farm contract to distribute HashStrat DAO tokens among LP token stakers proportionally to the amount and duration of the their stakes.
@@ -17,6 +16,9 @@ import "hardhat/console.sol";
  *
  * The contract implements an efficient O(1) algo to distribute the rewards based on this paper:
  * https://uploads-ssl.webflow.com/5ad71ffeb79acc67c8bcdaba/5ad8d1193a40977462982470_scalable-reward-distribution-paper.pdf
+ *
+ * Owner of this contract should be DAOOperations to add (and remvoe) supported LP tokens
+ *
  */
 
 contract HashStratDAOTokenFarm is StakingPool  {
@@ -123,12 +125,13 @@ contract HashStratDAOTokenFarm is StakingPool  {
 
     
     function getStakedLP(address account) public view returns (uint) {
+       
+        address[] memory enabledLP = super.getLPTokens();
+
         uint staked = 0;
-        for (uint i=0; i<lpTokensArray.length; i++){
-            address lpTokenAddress = lpTokensArray[i];
-            if (lpTokens[lpTokenAddress]) {
-                staked += stakes[account][lpTokenAddress];
-            }
+        for (uint i = 0; i < enabledLP.length; i++){
+            address lpToken = enabledLP[i];
+            staked += stakes[account][lpToken];
         }
         return staked;
     }
@@ -143,7 +146,6 @@ contract HashStratDAOTokenFarm is StakingPool  {
         RewardPeriod memory period = rewardPeriods[periodId-1];
 
         require(periodId > 0 && period.from <= block.timestamp, "No active reward period found");
-        // console.log(">> startStake", amount);
 
         update();
         super.startStake(lpToken, amount);
@@ -157,7 +159,6 @@ contract HashStratDAOTokenFarm is StakingPool  {
         update();
         super.endStake(lpToken, amount);
 
-        // update total tokens staked
         totalStaked -= amount;
         
         claim();
@@ -226,6 +227,11 @@ contract HashStratDAOTokenFarm is StakingPool  {
             RewardPeriod storage period = rewardPeriods[periodId-1];
             period.totalRewardsPaid += rewardsToPay;
 
+            // set the sender as delegate if none is set
+            if (hstToken.delegates(msg.sender) == address(0)) {
+                hstToken.delegate(msg.sender, msg.sender);
+            }
+
             payReward(msg.sender, rewardsToPay);
         }
     }
@@ -266,7 +272,6 @@ contract HashStratDAOTokenFarm is StakingPool  {
         uint i=0;
         while (i < rewardPeriods.length && rewardPeriods[i].id <= last.id) {
 
-            // console.log("rewardRate - i: ", i);
             RewardPeriod memory period = rewardPeriods[i];
 
             if (lastUpdated <= period.to && block.timestamp >= period.from ) {
@@ -291,9 +296,6 @@ contract HashStratDAOTokenFarm is StakingPool  {
 
     function update() internal {
         uint periodId = getLastRewardPeriodId();
-        // require(periodId > 0, "No active reward period found");
-
-        // console.log("update - periodId:", periodId);
         if (periodId == 0) return;
 
         RewardPeriod storage period = rewardPeriods[periodId-1];
@@ -310,8 +312,6 @@ contract HashStratDAOTokenFarm is StakingPool  {
 
         rewardPerTokenStaked = updatedRewardPerTokenStaked;
         lastUpdated = block.timestamp;
-
-        // console.log("update - userInfo.pendingRewards: ", userInfo.pendingRewards);
     }
 
 
@@ -321,15 +321,10 @@ contract HashStratDAOTokenFarm is StakingPool  {
         // calculate the updated average rate of the reward to be distributed since lastUpdated
         uint rate = rewardRate(period);
 
-        //console.log("calculateRewardDistribution - rate: ", rate);
-
-        
         // calculate the amount of additional reward to be distributed from 'lastUpdated' to min(block.timestamp, period.to)
         uint rewardIntervalEnd = block.timestamp > period.to ? period.to : block.timestamp;
         uint deltaTime = rewardIntervalEnd > lastUpdated ? rewardIntervalEnd - lastUpdated : 0;
         uint reward = deltaTime * rate; // the additional reward
-
-        //console.log("calculateRewardDistribution - deltaTime,rate, reward: ", deltaTime, rate, reward);
 
         // S = S + r / T
         uint newRewardPerTokenStaked = (totalStaked == 0)?  
@@ -347,7 +342,7 @@ contract HashStratDAOTokenFarm is StakingPool  {
         uint staked = getStakedLP(account);
         UserInfo memory userInfo = userInfos[account];
         
-        uint reward =  (staked * (rewardDistributionPerToken - userInfo.userRewardPerTokenStaked)) / rewardPrecision;
+        uint reward = (staked * (rewardDistributionPerToken - userInfo.userRewardPerTokenStaked)) / rewardPrecision;
 
         return reward;
     }

@@ -10,14 +10,12 @@ import "./ITreasury.sol";
 import "./IHashStratDAOToken.sol";
 import "./IDivsDistributor.sol";
 
-import "hardhat/console.sol";
-
 
 /**
  * This contract allows to distribute dividends to DAO token holders.
  *
  * The Owner of this contact should be DAOOperations that will be allow to
- * suspend or change the distrribution periods.
+ * suspend or change the distribution periods.
  *
  */
 
@@ -26,16 +24,17 @@ contract DivsDistributor is Ownable, IDivsDistributor {
     event DistributionIntervalCreated(uint paymentIntervalId, uint dividendsAmount, uint blockFrom, uint blockTo);
 
     uint immutable MIN_BLOCKS_INTERVAL = 1 * 24 * 60 * 60 / 2; 
-    uint immutable MAX_BLOCKS_INTERVAL = 365 * 24 * 60 * 60 / 2; 
+    uint immutable MAX_BLOCKS_INTERVAL = 90 * 24 * 60 * 60 / 2; 
 
     // Number of blocks for a payment interval
     uint public paymentInterval = 30 * 24 * 60 * 60 / 2; // 30 days (Polygon block time is ~ 2s)
+
 
     // The DAO token to distribute to stakers
     IHashStratDAOToken immutable public hstToken;
     IERC20Metadata immutable public feesToken;
 
-    uint public totalRewardsPaid;
+    uint public totalDivsPaid;
     DistributionInterval[] public distributiontIntervals;
     
 
@@ -46,6 +45,9 @@ contract DivsDistributor is Ownable, IDivsDistributor {
         uint to;        // block number
         uint rewardsPaid;
     }
+
+    // distribution_interval.id => ( account => claimed ) 
+    mapping(uint => mapping(address => bool)) claimed;
 
 
     constructor(address feesTokenAddress, address hstTokenAddress) {
@@ -70,10 +72,18 @@ contract DivsDistributor is Ownable, IDivsDistributor {
 
         DistributionInterval memory distribution = distributiontIntervals[distributiontIntervals.length - 1];
 
-        uint totalSupply = hstToken.getPastTotalSupply(distribution.from);
-        uint votes = hstToken.getPastVotes(account, distribution.from);
+        if (distribution.from == block.number) return 0;
 
-        divs = distribution.reward * votes / totalSupply;
+        if (claimedDivs(distribution.id, account) == false) {
+            uint tokens = hstToken.getPastVotes(account, distribution.from);
+            uint totalSupply = hstToken.getPastTotalSupply(distribution.from);
+
+            divs = totalSupply > 0 ? distribution.reward * tokens / totalSupply : 0;
+        }
+    }
+
+    function claimedDivs(uint distributionId, address account) public view returns (bool) {
+        return claimed[distributionId][account];
     }
 
 
@@ -82,24 +92,26 @@ contract DivsDistributor is Ownable, IDivsDistributor {
         uint divs = claimableDivs(msg.sender);
         if (divs > 0) {
             DistributionInterval storage distribution = distributiontIntervals[distributiontIntervals.length - 1];
+            claimed[distribution.id][msg.sender] = true;
             distribution.rewardsPaid += divs;
-            totalRewardsPaid += divs;
+            totalDivsPaid += divs;
+
             feesToken.transfer(msg.sender, divs);
         }
     }
 
     ///// IDivsDistributor
     
-    function canCreateNewDistributionInterval() external view returns (bool) {
-        return distributiontIntervals.length == 0 || block.number > distributiontIntervals[distributiontIntervals.length-1].to;
+    function canCreateNewDistributionInterval() public view returns (bool) {
+        return feesToken.balanceOf(address(this)) > 0 &&
+                (distributiontIntervals.length == 0 || block.number > distributiontIntervals[distributiontIntervals.length-1].to);
     }
 
 
     // Add a new reward period.
     // Requires to be called after the previous period ended and requires positive 'feesToken' balance
     function addDistributionInterval() external {
-
-        require(distributiontIntervals.length == 0 || block.number > distributiontIntervals[distributiontIntervals.length-1].to, "Payemnt interval is active");
+        require(canCreateNewDistributionInterval(), "Cannot create distribution interval");
 
         uint from = distributiontIntervals.length == 0 ? block.number : distributiontIntervals[distributiontIntervals.length-1].to + 1;
         uint to = block.number + paymentInterval;
@@ -115,8 +127,8 @@ contract DivsDistributor is Ownable, IDivsDistributor {
 
 
     //// OnlyOwner functionality
-    function setPaymentInterval(uint blocks) public onlyOwner {
-        require (blocks >= MIN_BLOCKS_INTERVAL && blocks <= MAX_BLOCKS_INTERVAL, "Interval payment interval");
+    function updatePaymentInterval(uint blocks) public onlyOwner {
+        require (blocks >= MIN_BLOCKS_INTERVAL && blocks <= MAX_BLOCKS_INTERVAL, "Invalid payment interval");
         paymentInterval = blocks;
     }
 
