@@ -4,7 +4,7 @@ import { ethers, network } from "hardhat";
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/dist/src/signer-with-address";
 
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
-import { fromWei, waitDays } from "./helpers"
+import { fromUsdc, fromWei, waitDays } from "./helpers"
 
 import abis from "./abis/abis.json";
 
@@ -84,37 +84,38 @@ describe("HashStratDAOTokenFarm", function () {
 
 	describe("Token distribution", function () {
 
-		it(`Given a user,
-		when they farm some tokens and they are not set as delegate,
-		then they should become the delegate of the tokens' votes`, async function () {
+
+		it(`Given One user,
+		when they stake some tokens for part of a reward period and no user has staked tokens before, 
+		then they should farm all tokens issued for that part of the reward period`, async function () {
 
 			const [addr1] = await ethers.getSigners();
 			const { usdc, hashStratDAOTokenFarm, hashStratDAOToken, pool1, pool1LP } = await loadFixture(deployTokenAndFarm);
 			const amount = 100 * 10 ** 6
 			await transferFunds(amount, addr1.address)
 
+			// Wait 180 days
+			await waitDays(180)
+
 			// Deposit USDC in pool and stake LP
-			const lpstaked = await depositAndStake(addr1, amount, usdc, pool1, pool1LP, hashStratDAOTokenFarm)
+			await depositAndStake(addr1, amount, usdc, pool1, pool1LP, hashStratDAOTokenFarm)
+		
+			// check LP tokens staked
+			const lpstaked = await hashStratDAOTokenFarm.getStakedLP(addr1.address)
 
-			expect(lpstaked).to.be.equal(await hashStratDAOTokenFarm.getStakedLP(addr1.address))
+			// Wait 2 days
+			await waitDays(2)
 
-			// Wait 30 days
-			await waitDays(30)
-
-			// claimable tokens after 1 year
+			// claimable tokens
 			const claimableRewardAddr1 = fromWei(await hashStratDAOTokenFarm.claimableReward(addr1.address))
-			expect(claimableRewardAddr1).to.be.approximately(500_000 * 30 / 365, 1);
 
-			// no tokens farmed & no delegate
-			expect( await hashStratDAOToken.balanceOf(addr1.address) ).to.be.equal(0);
-			expect( await hashStratDAOToken.delegates(addr1.address) ).to.be.equal( ethers.constants.AddressZero );
+			const expectedClaimabeTokens = 500_000 / 365 * 2  // tokens disributed for 2 days
+			expect(claimableRewardAddr1).to.be.approximately(expectedClaimabeTokens, 1);
 
-			// addr1 end stake and receive some tokens
-			await hashStratDAOTokenFarm.connect(addr1).endStake(pool1LP.address, lpstaked)
+			await hashStratDAOTokenFarm.connect(addr1).endStakeAndWithdraw(pool1LP.address, lpstaked)
+			const tokensFarmed = fromWei(await hashStratDAOToken.balanceOf(addr1.address))
 
-			// verify tokens were received by addr1 and he is the delegate
-			expect( await hashStratDAOToken.balanceOf(addr1.address) ).to.be.greaterThan( 0 )
-			expect( await hashStratDAOToken.delegates(addr1.address) ).to.be.equal( addr1.address );
+			expect(tokensFarmed).to.be.approximately(expectedClaimabeTokens, 1);
 		})
 
 
@@ -173,6 +174,38 @@ describe("HashStratDAOTokenFarm", function () {
 			expect(tokensFarmed).to.be.approximately(1_000_000, 200);
 		})
 
+		it(`Given a user,
+		when they farm some tokens and they are not set as delegate,
+		then they should become the delegate of the tokens' votes`, async function () {
+
+			const [addr1] = await ethers.getSigners();
+			const { usdc, hashStratDAOTokenFarm, hashStratDAOToken, pool1, pool1LP } = await loadFixture(deployTokenAndFarm);
+			const amount = 100 * 10 ** 6
+			await transferFunds(amount, addr1.address)
+
+			// Deposit USDC in pool and stake LP
+			const lpstaked = await depositAndStake(addr1, amount, usdc, pool1, pool1LP, hashStratDAOTokenFarm)
+
+			expect(lpstaked).to.be.equal(await hashStratDAOTokenFarm.getStakedLP(addr1.address))
+
+			// Wait 30 days
+			await waitDays(30)
+
+			// claimable tokens after 1 year
+			const claimableRewardAddr1 = fromWei(await hashStratDAOTokenFarm.claimableReward(addr1.address))
+			expect(claimableRewardAddr1).to.be.approximately(500_000 * 30 / 365, 1);
+
+			// no tokens farmed & no delegate
+			expect( await hashStratDAOToken.balanceOf(addr1.address) ).to.be.equal(0);
+			expect( await hashStratDAOToken.delegates(addr1.address) ).to.be.equal( ethers.constants.AddressZero );
+
+			// addr1 end stake and receive some tokens
+			await hashStratDAOTokenFarm.connect(addr1).endStake(pool1LP.address, lpstaked)
+
+			// verify tokens were received by addr1 and he is the delegate
+			expect( await hashStratDAOToken.balanceOf(addr1.address) ).to.be.greaterThan( 0 )
+			expect( await hashStratDAOToken.delegates(addr1.address) ).to.be.equal( addr1.address );
+		})
 
 		it(`Given Two users,
 		when they stake the same amount for the entire reward period, 

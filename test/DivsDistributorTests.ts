@@ -56,11 +56,11 @@ describe("DivsDistributor", function () {
 			await divsDistributor.addDistributionInterval()
 			await mineBlocks(1)
 
-			expect( await divsDistributor.getDistributiontIntervalsCount() ).to.be.equal( 1 )
+			expect( await divsDistributor.getDistributionIntervalsCount() ).to.be.equal( 1 )
 
-			const firstInterval = await divsDistributor.distributiontIntervals(0)
+			const firstInterval = await divsDistributor.distributionIntervals(0)
 
-			expect( await divsDistributor.getDistributiontIntervalsCount() ).to.be.equal( 1 )
+			expect( await divsDistributor.getDistributionIntervalsCount() ).to.be.equal( 1 )
 			expect( firstInterval.reward ).to.be.equal( toUsdc('200') )
 			expect( firstInterval.to.sub(firstInterval.from) ).to.be.equal(  await divsDistributor.paymentInterval() )
 		})
@@ -85,7 +85,7 @@ describe("DivsDistributor", function () {
 
 			// create another distribution interval
 			await divsDistributor.addDistributionInterval()
-			expect( await divsDistributor.getDistributiontIntervalsCount() ).to.be.equal( 2 )
+			expect( await divsDistributor.getDistributionIntervalsCount() ).to.be.equal( 2 )
 		})
 
 
@@ -97,7 +97,7 @@ describe("DivsDistributor", function () {
 			// fail to create another distribution interval
 			await expect( divsDistributor.addDistributionInterval() ).to.be.revertedWith("Cannot create distribution interval");
 
-			expect( await divsDistributor.getDistributiontIntervalsCount() ).to.be.equal( 0 )
+			expect( await divsDistributor.getDistributionIntervalsCount() ).to.be.equal( 0 )
 		})
 
 		it("cannot create a new distribution interval when the previous distribution has not ended", async function () {
@@ -119,7 +119,7 @@ describe("DivsDistributor", function () {
 
 			// fail to create another distribution interval
 			await expect( divsDistributor.addDistributionInterval() ).to.be.revertedWith("Cannot create distribution interval");
-			expect( await divsDistributor.getDistributiontIntervalsCount() ).to.be.equal( 1 )
+			expect( await divsDistributor.getDistributionIntervalsCount() ).to.be.equal( 1 )
 		})
 
 
@@ -150,7 +150,7 @@ describe("DivsDistributor", function () {
 			await divsDistributor.addDistributionInterval()
 			await mineBlocks(1)
 
-			expect( await divsDistributor.getDistributiontIntervalsCount() ).to.be.equal( 1 )
+			expect( await divsDistributor.getDistributionIntervalsCount() ).to.be.equal( 1 )
 			expect( fromUsdc(await divsDistributor.claimableDivs(addr1.address)) ).to.be.equal( 50 )
 		})
 
@@ -223,7 +223,7 @@ describe("DivsDistributor", function () {
 			await divsDistributor.addDistributionInterval()
 			await mineBlocks(1)
 
-			expect( await divsDistributor.getDistributiontIntervalsCount() ).to.be.equal( 1 )
+			expect( await divsDistributor.getDistributionIntervalsCount() ).to.be.equal( 1 )
 			expect( fromUsdc(await divsDistributor.claimableDivs(addr1.address)) ).to.be.equal( 50 )
 
 			// addr1 transfer all his tokens
@@ -377,7 +377,7 @@ describe("DivsDistributor", function () {
 			await divsDistributor.addDistributionInterval()
 			await mineBlocks(1)
 
-			expect( await divsDistributor.getDistributiontIntervalsCount() ).to.be.equal( 1 )
+			expect( await divsDistributor.getDistributionIntervalsCount() ).to.be.equal( 1 )
 			expect( fromUsdc(await divsDistributor.claimableDivs(addr1.address)) ).to.be.equal( 50 )
 
 			// addr1 transfer all his tokens

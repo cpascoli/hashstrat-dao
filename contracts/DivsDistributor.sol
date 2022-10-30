@@ -4,9 +4,6 @@ pragma solidity ^0.8.14;
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-import "./IPoolV3.sol";
-import "./ITreasury.sol";
-
 import "./IHashStratDAOToken.sol";
 import "./IDivsDistributor.sol";
 
@@ -35,7 +32,7 @@ contract DivsDistributor is Ownable, IDivsDistributor {
     IERC20Metadata immutable public feesToken;
 
     uint public totalDivsPaid;
-    DistributionInterval[] public distributiontIntervals;
+    DistributionInterval[] public distributionIntervals;
     
 
     struct DistributionInterval {
@@ -57,20 +54,20 @@ contract DivsDistributor is Ownable, IDivsDistributor {
 
 
     function getDistributionIntervals() public view returns (DistributionInterval[] memory) {
-        return distributiontIntervals;
+        return distributionIntervals;
     }
 
 
-    function getDistributiontIntervalsCount() public view returns (uint) {
-        return distributiontIntervals.length;
+    function getDistributionIntervalsCount() public view returns (uint) {
+        return distributionIntervals.length;
     }
 
 
     function claimableDivs(address account) public view returns (uint divs) {
 
-        if (distributiontIntervals.length == 0) return 0;
+        if (distributionIntervals.length == 0) return 0;
 
-        DistributionInterval memory distribution = distributiontIntervals[distributiontIntervals.length - 1];
+        DistributionInterval memory distribution = distributionIntervals[distributionIntervals.length - 1];
 
         if (distribution.from == block.number) return 0;
 
@@ -91,7 +88,7 @@ contract DivsDistributor is Ownable, IDivsDistributor {
     function claimDivs() public {
         uint divs = claimableDivs(msg.sender);
         if (divs > 0) {
-            DistributionInterval storage distribution = distributiontIntervals[distributiontIntervals.length - 1];
+            DistributionInterval storage distribution = distributionIntervals[distributionIntervals.length - 1];
             claimed[distribution.id][msg.sender] = true;
             distribution.rewardsPaid += divs;
             totalDivsPaid += divs;
@@ -100,11 +97,12 @@ contract DivsDistributor is Ownable, IDivsDistributor {
         }
     }
 
+
     ///// IDivsDistributor
     
     function canCreateNewDistributionInterval() public view returns (bool) {
         return feesToken.balanceOf(address(this)) > 0 &&
-                (distributiontIntervals.length == 0 || block.number > distributiontIntervals[distributiontIntervals.length-1].to);
+                (distributionIntervals.length == 0 || block.number > distributionIntervals[distributionIntervals.length-1].to);
     }
 
 
@@ -113,16 +111,16 @@ contract DivsDistributor is Ownable, IDivsDistributor {
     function addDistributionInterval() external {
         require(canCreateNewDistributionInterval(), "Cannot create distribution interval");
 
-        uint from = distributiontIntervals.length == 0 ? block.number : distributiontIntervals[distributiontIntervals.length-1].to + 1;
+        uint from = distributionIntervals.length == 0 ? block.number : distributionIntervals[distributionIntervals.length-1].to + 1;
         uint to = block.number + paymentInterval;
 
         // determine the reward amount
         uint reward = feesToken.balanceOf(address(this));
         require(reward > 0, "Invalid reward amount");
    
-        distributiontIntervals.push(DistributionInterval(distributiontIntervals.length+1, reward, from, to, 0));
+        distributionIntervals.push(DistributionInterval(distributionIntervals.length+1, reward, from, to, 0));
 
-        emit DistributionIntervalCreated(distributiontIntervals.length, reward, from, to);
+        emit DistributionIntervalCreated(distributionIntervals.length, reward, from, to);
     }
 
 

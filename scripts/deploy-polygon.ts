@@ -7,17 +7,17 @@ import abis from "./abis/abis.json";
 const usdcAddress = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'
 
 
-const HashStratDAOTokenAddress = '0x77Ee22B63176DB8D904EF4aB5A4492BB700A8b39'
+const hashStratDAOTokenAddress = '0x77Ee22B63176DB8D904EF4aB5A4492BB700A8b39'
 const hashStratDAOTokenFarmAddress = '0x08487dBb81Fcb2420b4C996f10E6B6DA9f37EB05'
 const treasuryAddress = '0x645216B9Ae8e11bd3Fb997fA22753F1288094197'
-const divsDistributorAdddress = '0xB4A75340Fb83093b627665EdCB55A7A8E56014eD'
+const divsDistributorAdddress = '0x35c1D11D1A28Aa454386C9A13dFa7dA773caFA1F'
 
 
 async function main() {
 
 	await depolyHashStratDAOTokenAndFarm()
 	await addLPTokensToFarm(hashStratDAOTokenFarmAddress)
-	await deployDivDistributor(usdcAddress)
+	await deployDivDistributor(usdcAddress, hashStratDAOTokenAddress)
 	await deployDAOOperations(usdcAddress, treasuryAddress, divsDistributorAdddress, hashStratDAOTokenFarmAddress)
 }
 
@@ -57,9 +57,9 @@ const depolyHashStratDAOTokenAndFarm = async () => {
 
 
 
-const deployDivDistributor = async (usdcAddress: string) => {
+const deployDivDistributor = async (usdcAddress: string, hashStratDAOTokenAddress: string) => {
 
-	///////  Deploy Governance 
+	///////  Deploy Governance :
 	console.log("Starting deployment of Treasury on POLYGON")
 
 	const Treasury = await ethers.getContractFactory("Treasury");
@@ -70,11 +70,11 @@ const deployDivDistributor = async (usdcAddress: string) => {
 	console.log("Starting deployment of DivsDistributor on POLYGON")
 
 	const DivsDistributor = await ethers.getContractFactory("DivsDistributor");
-	const divsDistributor = await DivsDistributor.deploy(usdcAddress, treasury.address)
+	const divsDistributor = await DivsDistributor.deploy(usdcAddress, hashStratDAOTokenAddress)
 	await divsDistributor.deployed()
 
 	console.log("DivsDistributor deployed at address ", divsDistributor.address)
-	console.log("DivsDistributor distribution intervals: ", await divsDistributor.getDistributiontIntervalsCount() )
+	console.log("DivsDistributor distribution intervals: ", await divsDistributor.getDistributionIntervalsCount() )
 }
 
 
