@@ -28,6 +28,9 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
     uint public totalFeesCollected;
     uint public totalFeesTransferred;
 
+    uint public upkeepInterval = 7 * 24 * 60 * 60;
+    uint public lastUpkeepTimestamp;
+
     // the addresses of LP tokens of the HashStrat Pools and Indexes supported
     address[] poolsArray;
     mapping(address => bool) enabledPools;
@@ -51,6 +54,8 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
         feesToken = IERC20Metadata(feesTokenAddress);
         divsDistributor = IDivsDistributor(divsDistributorAddress);
         tokenFarm = IHashStratDAOTokenFarm(tokenFarmAddress);
+
+        lastUpkeepTimestamp = block.timestamp;
     }
 
 
@@ -122,7 +127,7 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
             if (enabledPools[poolsArray[i]]) {
                 IPoolV3 pool = IPoolV3(poolsArray[i]);
                 uint before = feesToken.balanceOf(address(this));
-                pool.collectFees(0);  // withdraw fees in (stable asset) from pool to this contract
+                pool.collectFees(0);  // withdraw fees (converted to stable asset) to this contract
                 uint collectedAmount = feesToken.balanceOf(address(this)) - before;
                 if (collectedAmount > 0) {
                     totalFeesCollected += collectedAmount;
@@ -184,35 +189,50 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
     }
 
 
-    function setUpkeepInterval(address poolAddress, uint upkeepInterval) external onlyOwner {
-        IPoolV3(poolAddress).setUpkeepInterval(upkeepInterval);
+    function setPoolUpkeepInterval(address poolAddress, uint interval) external onlyOwner {
+        IPoolV3(poolAddress).setUpkeepInterval(interval);
     }
+
 
 
     //// AutomationCompatible
-    function checkUpkeep(bytes calldata /* checkData */) external view override returns (bool upkeepNeeded, bytes memory performData) {
-        upkeepNeeded = divsDistributor.canCreateNewDistributionInterval();
+
+    function setUpkeepInterval(uint _upkeepInterval) public onlyOwner {
+        upkeepInterval = _upkeepInterval;
     }
 
 
-    // Transfer new fees from Pools to Treasury and create a new distribution interval
-    function performUpkeep(bytes calldata /* performData */) external override {
+    function checkUpkeep(bytes calldata /* checkData */) external view override returns (bool upkeepNeeded, bytes memory performData) {
+        bool timeElapsed = (block.timestamp - lastUpkeepTimestamp) >= upkeepInterval;
+        upkeepNeeded = (timeElapsed && collectableFees() > 0) || divsDistributor.canCreateNewDistributionInterval();
         
-        if ( divsDistributor.canCreateNewDistributionInterval() ) {
+        return (upkeepNeeded, "");
+    }
+
+
+    // Transfer recent fees from Pools to Treasury and create a new distribution interval
+    function performUpkeep(bytes calldata /* performData */) external override {
+        bool timeElapsed = (block.timestamp - lastUpkeepTimestamp) >= upkeepInterval;
+        if ( (timeElapsed && collectableFees() > 0) || divsDistributor.canCreateNewDistributionInterval() ) {
             
             // transfer new fees from pools to the Treasury
+            uint trasuryBalanceBefore = feesToken.balanceOf(address(treasury));
             collectFees();
-            uint trasuryBalance = feesToken.balanceOf(address(treasury));
+            uint collected = feesToken.balanceOf(address(treasury)) - trasuryBalanceBefore;
 
-            uint feesToDistribute = trasuryBalance * divsPerc / 10 ** PERC_DECIMALS;
-            if (feesToDistribute > 0) {
-                treasury.transferFunds(address(divsDistributor), feesToDistribute);
+            // transfer % of fees to distribute to DivsDistributor
+            uint divsToDistribute = collected * divsPerc / 10 ** PERC_DECIMALS;
+            if (divsToDistribute > 0) {
+                treasury.transferFunds(address(divsDistributor), divsToDistribute);
             }
-            // if there re divs to distribute, create a new distribution interval
-            if (feesToken.balanceOf(address(divsDistributor)) > 0) {
+
+            // create new distribution interval if possible
+            if (divsDistributor.canCreateNewDistributionInterval() ) {
                 divsDistributor.addDistributionInterval();
             }
         }
+
+        lastUpkeepTimestamp = block.timestamp;
     }
 
 }

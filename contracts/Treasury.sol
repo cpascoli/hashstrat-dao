@@ -5,7 +5,6 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 import "./ITreasury.sol";
-import "./IPoolV3.sol";
 
 
 /**
@@ -16,19 +15,39 @@ import "./IPoolV3.sol";
 
 contract Treasury is ITreasury, Ownable {
 
-    IERC20Metadata public feesToken;
+    event FundsTransferred(address indexed recepient, uint amount);
 
-    constructor(address feesTokenAddress) {
-        feesToken = IERC20Metadata(feesTokenAddress);
+
+    IERC20Metadata public paymentToken;
+
+    Payment[] public payments;
+
+    struct Payment {
+        uint id;
+        uint amount;
+        address recepient;
+    }
+
+
+    constructor(address tokenAddress) {
+        paymentToken = IERC20Metadata(tokenAddress);
     }
 
     function getBalance() external view returns (uint) {
-        return feesToken.balanceOf(address(this));
+        return paymentToken.balanceOf(address(this));
     }
 
-    // used by DAOOperations to transfer divs to the
+    function getPayments() public view returns (Payment[] memory) {
+        return payments;
+    }
+
+    // used by DAOOperations to make payments
     function transferFunds(address to, uint amount) external onlyOwner {
-        feesToken.transfer(to, amount);
+        payments.push(Payment(payments.length+1, amount, to));
+
+        paymentToken.transfer(to, amount);
+
+        emit FundsTransferred(to, amount);
     }
 
 }

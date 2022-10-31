@@ -270,6 +270,9 @@ describe("DivsDistributor", function () {
 
 			await mineBlocks(1)
 
+			expect ( await divsDistributor.claimedDivs(1, addr1.address) ).to.be.approximately( toUsdc('50'), 500)
+			expect ( await divsDistributor.claimedDivs(1, addr2.address) ).to.be.approximately( toUsdc('150'), 500)
+
 			expect ( await usdc.balanceOf(addr1.address) ).to.be.approximately( toUsdc('50'), 500)
 			expect ( await usdc.balanceOf(addr2.address) ).to.be.approximately( toUsdc('150'), 500)
 		})
@@ -295,6 +298,7 @@ describe("DivsDistributor", function () {
 			// addr1 claims divs
 			await divsDistributor.connect(addr1).claimDivs()
 
+			expect ( await divsDistributor.claimedDivs(1, addr1.address) ).to.be.equal( 0 )
 			expect ( await usdc.balanceOf(addr1.address) ).to.be.equals( 0 )
 		})
 
@@ -322,6 +326,7 @@ describe("DivsDistributor", function () {
 			expect ( await usdc.balanceOf(addr1.address) ).to.be.equals( 0 )
 
 			await divsDistributor.connect(addr1).claimDivs()
+			expect ( await divsDistributor.claimedDivs(1, addr1.address) ).to.be.equal( 0 )
 			expect ( await usdc.balanceOf(addr1.address) ).to.be.equals( 0 )
 		})
 
