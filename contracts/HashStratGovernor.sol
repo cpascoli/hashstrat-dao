@@ -16,11 +16,12 @@ contract HashStratGovernor is Governor, GovernorCompatibilityBravo, GovernorVote
         TimelockController _timelock,
         uint256 _initialVotingDelay,
         uint256 _initialVotingPeriod,
-        uint256 _initialProposalThreshold
+        uint256 _initialProposalThreshold,
+        uint256 _initialQuorumFraction
     )
         Governor("HashStratGovernor")
         GovernorVotes(_token)
-        GovernorVotesQuorumFraction(10)
+        GovernorVotesQuorumFraction(_initialQuorumFraction)
         GovernorTimelockControl(_timelock)
         GovernorSettings(_initialVotingDelay, _initialVotingPeriod, _initialProposalThreshold)
     {}

@@ -41,9 +41,17 @@ describe("HashStratGovernor", function () {
 		const initialVotingDelay = 0
 		const initialVotingPeriod = 1000
 		const initialProposalThreshold = 0
+		const initialQuorumFraction = 10  // 10% quorum
 
 		const HashStratGovernor = await ethers.getContractFactory("HashStratGovernor");
-		const hashStratGovernor = await HashStratGovernor.deploy(hashStratDAOToken.address, timelockController.address, initialVotingDelay, initialVotingPeriod, initialProposalThreshold)
+		const hashStratGovernor = await HashStratGovernor.deploy(
+			hashStratDAOToken.address, 
+			timelockController.address, 
+			initialVotingDelay, 
+			initialVotingPeriod,
+			initialProposalThreshold,
+			initialQuorumFraction
+		)
 		await hashStratGovernor.deployed()
 
 		// Add the Governor as a proposer and executor roles 
@@ -86,7 +94,7 @@ describe("HashStratGovernor", function () {
 	}
 
 
-	describe("Governor", function () {
+	describe("TimelockController", function () {
 
 		it("has Proposer role", async function () {
 			const { timelockController, hashStratGovernor } = await loadFixture(deployGovernorFixture);
@@ -101,6 +109,78 @@ describe("HashStratGovernor", function () {
 
 			expect( await timelockController.hasRole(EXECUTOR_ROLE, hashStratGovernor.address) ).to.be.true
 		});
+
+		it("has no delay", async function () {
+			const { timelockController, hashStratGovernor } = await loadFixture(deployGovernorFixture);
+			const EXECUTOR_ROLE = await timelockController.EXECUTOR_ROLE()
+
+			expect( await timelockController.getMinDelay() ).to.be.equal( 0 )
+		});
+
+		it("can increase delay via proposal", async function () {
+
+			const [ owner, proposer, voter ] = await ethers.getSigners();
+			const { hashStratGovernor, hashStratDAOToken, timelockController } = await loadFixture(deployGovernorFixture);
+
+			hashStratDAOToken.connect(voter).autoDelegate()
+
+			// transfer some tokens to voter
+			await hashStratDAOToken.connect(owner).mint( voter.address, toWei('100000') )
+
+		
+			// Submit proposal to transfer 1000 USDC from 'daoOperations' to 'recepient'
+			const description = "Proposal #1: Increase timelock delay"
+
+			// new delay of 7 days
+			const newDelay = 7 * 24 * 60 * 60
+
+			const transferCalldata = timelockController.interface.encodeFunctionData('updateDelay', [newDelay]);
+			await hashStratGovernor.connect(proposer)["propose(address[],uint256[],bytes[],string)"] (
+				[timelockController.address],
+				[0],  // no ether to send
+				[transferCalldata],
+				description
+			);
+
+			// get proposal state by proposalId
+			const proposalId = await hashStratGovernor.hashProposal(
+				[timelockController.address],
+				[0],
+				[transferCalldata],
+				ethers.utils.id(description)
+			)
+
+			/// Cast vote on proposal (Against: 0, For: 1, Abstain: 2)
+			await hashStratGovernor.connect(voter).castVote(proposalId, 1)
+
+			await mineBlocks(1000) // wait for the end of the proposal period
+			const proposalState = await hashStratGovernor.state(proposalId)
+
+			const Succeeded = 4
+			expect( proposalState ).to.be.equal(Succeeded)
+
+			
+			// queue proposal for execution
+			await hashStratGovernor["queue(address[],uint256[],bytes[],bytes32)"](
+				[timelockController.address],
+				[0],
+				[transferCalldata],
+				ethers.utils.id(description)
+			);
+
+			// execute proposal 
+			await hashStratGovernor["execute(address[],uint256[],bytes[],bytes32)"](
+				[timelockController.address],
+				[0],
+				[transferCalldata],
+				ethers.utils.id(description)
+			);
+
+
+
+			expect( await timelockController.getMinDelay() ).to.be.equal( newDelay )
+		});
+
 	});
 
 
@@ -286,7 +366,80 @@ describe("HashStratGovernor", function () {
 
 
 	});
-	
+
+
+	describe("HashStratGovernor", function () {
+
+		it("has initial 10% quorum", async function () {
+			const { hashStratGovernor } = await loadFixture(deployGovernorFixture);
+			
+			expect( await hashStratGovernor["quorumNumerator()"]() ).to.be.equal( 10 )
+		});
+
+
+		it("can increase quorum via proposal", async function () {
+
+			const [ owner, proposer, voter ] = await ethers.getSigners();
+			const { hashStratGovernor, hashStratDAOToken, timelockController } = await loadFixture(deployGovernorFixture);
+
+			hashStratDAOToken.connect(voter).autoDelegate()
+
+			// transfer some tokens to voter
+			await hashStratDAOToken.connect(owner).mint( voter.address, toWei('100000') )
+
+			// new quorum of 50%
+			const newQuorumNumerator = 50
+			const description = "Proposal #1: Increase quorum"
+
+			const transferCalldata = hashStratGovernor.interface.encodeFunctionData('updateQuorumNumerator', [newQuorumNumerator]);
+			await hashStratGovernor.connect(proposer)["propose(address[],uint256[],bytes[],string)"] (
+				[hashStratGovernor.address],
+				[0],  // no ether to send
+				[transferCalldata],
+				description
+			);
+
+			// get proposal state by proposalId
+			const proposalId = await hashStratGovernor.hashProposal(
+				[hashStratGovernor.address],
+				[0],
+				[transferCalldata],
+				ethers.utils.id(description)
+			)
+
+			/// Cast vote on proposal (Against: 0, For: 1, Abstain: 2)
+			await hashStratGovernor.connect(voter).castVote(proposalId, 1)
+
+			await mineBlocks(1000) // wait for the end of the proposal period
+			const proposalState = await hashStratGovernor.state(proposalId)
+
+			const Succeeded = 4
+			expect( proposalState ).to.be.equal(Succeeded)
+
+			
+			// queue proposal for execution
+			await hashStratGovernor["queue(address[],uint256[],bytes[],bytes32)"](
+				[hashStratGovernor.address],
+				[0],
+				[transferCalldata],
+				ethers.utils.id(description)
+			);
+
+			// execute proposal 
+			await hashStratGovernor["execute(address[],uint256[],bytes[],bytes32)"](
+				[hashStratGovernor.address],
+				[0],
+				[transferCalldata],
+				ethers.utils.id(description)
+			);
+
+
+
+			expect( await hashStratGovernor["quorumNumerator()"]() ).to.be.equal( newQuorumNumerator )
+		});
+
+	});
+
 
 })
 
