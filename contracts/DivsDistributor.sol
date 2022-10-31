@@ -19,6 +19,8 @@ import "./IDivsDistributor.sol";
 contract DivsDistributor is Ownable, IDivsDistributor {
 
     event DistributionIntervalCreated(uint paymentIntervalId, uint dividendsAmount, uint blockFrom, uint blockTo);
+    event DividendsClaimed(address indexed recipient, uint amount);
+
 
     uint immutable MIN_BLOCKS_INTERVAL = 1 * 24 * 60 * 60 / 2; 
     uint immutable MAX_BLOCKS_INTERVAL = 90 * 24 * 60 * 60 / 2; 
@@ -43,8 +45,8 @@ contract DivsDistributor is Ownable, IDivsDistributor {
         uint rewardsPaid;
     }
 
-    // distribution_interval.id => ( account => claimed ) 
-    mapping(uint => mapping(address => bool)) claimed;
+    // distribution_interval_id => ( account => claimed_amount) 
+    mapping(uint => mapping(address => uint)) claimed;
 
 
     constructor(address feesTokenAddress, address hstTokenAddress) {
@@ -69,31 +71,36 @@ contract DivsDistributor is Ownable, IDivsDistributor {
 
         DistributionInterval memory distribution = distributionIntervals[distributionIntervals.length - 1];
 
-        if (distribution.from == block.number) return 0;
+        if (distribution.from >= block.number) return 0;
 
-        if (claimedDivs(distribution.id, account) == false) {
+        if (claimedDivs(distribution.id, account) == 0) {
             uint tokens = hstToken.getPastVotes(account, distribution.from);
             uint totalSupply = hstToken.getPastTotalSupply(distribution.from);
 
             divs = totalSupply > 0 ? distribution.reward * tokens / totalSupply : 0;
         }
+
+        return divs;
     }
 
-    function claimedDivs(uint distributionId, address account) public view returns (bool) {
+
+    function claimedDivs(uint distributionId, address account) public view returns (uint) {
         return claimed[distributionId][account];
     }
 
 
-    // claim divs
+    // transfer dividends to sender
     function claimDivs() public {
         uint divs = claimableDivs(msg.sender);
         if (divs > 0) {
             DistributionInterval storage distribution = distributionIntervals[distributionIntervals.length - 1];
-            claimed[distribution.id][msg.sender] = true;
+            claimed[distribution.id][msg.sender] = divs;
             distribution.rewardsPaid += divs;
             totalDivsPaid += divs;
 
             feesToken.transfer(msg.sender, divs);
+
+            emit DividendsClaimed(msg.sender, divs);
         }
     }
 
@@ -102,7 +109,7 @@ contract DivsDistributor is Ownable, IDivsDistributor {
     
     function canCreateNewDistributionInterval() public view returns (bool) {
         return feesToken.balanceOf(address(this)) > 0 &&
-                (distributionIntervals.length == 0 || block.number > distributionIntervals[distributionIntervals.length-1].to);
+               (distributionIntervals.length == 0 || block.number > distributionIntervals[distributionIntervals.length-1].to);
     }
 
 
@@ -116,8 +123,6 @@ contract DivsDistributor is Ownable, IDivsDistributor {
 
         // determine the reward amount
         uint reward = feesToken.balanceOf(address(this));
-        require(reward > 0, "Invalid reward amount");
-   
         distributionIntervals.push(DistributionInterval(distributionIntervals.length+1, reward, from, to, 0));
 
         emit DistributionIntervalCreated(distributionIntervals.length, reward, from, to);
