@@ -41,7 +41,6 @@ describe("DivsDistributor", function () {
 		return { treasury, divsDistributor, hashStratDAOToken, usdc };
 	}
 
-
 	describe("#addDistributionInterval", function () {
 
 		it("creates the first distribution interval", async function () {
@@ -124,9 +123,6 @@ describe("DivsDistributor", function () {
 
 
 	});
-
-
-
 
 
 	describe("#claimableDivs", function () {
@@ -240,9 +236,7 @@ describe("DivsDistributor", function () {
 	});
 
 
-
 	describe("#claimDivs", function () {
-
 
 		it("pays dividends proportionally to a user tokens balance at the start of the distribution period", async function () {
 			const { divsDistributor, hashStratDAOToken, usdc } = await loadFixture(deployDivsDistributorFixture);

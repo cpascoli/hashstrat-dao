@@ -130,7 +130,7 @@ contract DivsDistributor is Ownable, IDivsDistributor {
 
 
     //// OnlyOwner functionality
-    function updatePaymentInterval(uint blocks) public onlyOwner {
+    function setDivsDistributionInterval(uint blocks) public onlyOwner {
         require (blocks >= MIN_BLOCKS_INTERVAL && blocks <= MAX_BLOCKS_INTERVAL, "Invalid payment interval");
         paymentInterval = blocks;
     }

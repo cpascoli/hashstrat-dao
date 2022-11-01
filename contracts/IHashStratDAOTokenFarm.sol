@@ -3,6 +3,6 @@ pragma solidity ^0.8.14;
 
 interface IHashStratDAOTokenFarm {
 
-    function addLPTokens(address[] memory lpTokenAddresses) external;
-    function removeLPTokens(address[] memory lpTokenAddresses) external;
+    function addPools(address[] memory poolsAddresses) external;
+    function removePools(address[] memory poolsAddresses) external;
 }

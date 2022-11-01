@@ -9,7 +9,7 @@ import "./ITreasury.sol";
 
 /**
  * The DAO Treasury holds the funds collected from the Pools.
- * Owner of this contract should be DAOOperations to transfer funds to DivsDistributor
+ * Owner of this contract should be DAOOperations to allow Governance to make payments
  *
 */
 
@@ -24,6 +24,7 @@ contract Treasury is ITreasury, Ownable {
 
     struct Payment {
         uint id;
+        uint timestamp;
         uint amount;
         address recepient;
     }
@@ -43,8 +44,7 @@ contract Treasury is ITreasury, Ownable {
 
     // used by DAOOperations to make payments
     function transferFunds(address to, uint amount) external onlyOwner {
-        payments.push(Payment(payments.length+1, amount, to));
-
+        payments.push(Payment(payments.length+1, block.timestamp, amount, to));
         paymentToken.transfer(to, amount);
 
         emit FundsTransferred(to, amount);

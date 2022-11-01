@@ -9,7 +9,7 @@ import "./IPoolV3.sol";
 import "./ITreasury.sol";
 import "./IDivsDistributor.sol";
 import "./IHashStratDAOTokenFarm.sol";
-
+import "./IOwnable.sol";
 
 /**
  * This contract implements the DAO functions executable via DAO proposals.
@@ -28,18 +28,25 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
     uint public totalFeesCollected;
     uint public totalFeesTransferred;
 
-    uint public upkeepInterval = 7 * 24 * 60 * 60;
+    uint public upkeepInterval = 1 * 24 * 60 * 60;
     uint public lastUpkeepTimestamp;
 
-    // the addresses of LP tokens of the HashStrat Pools and Indexes supported
-    address[] poolsArray;
-    mapping(address => bool) enabledPools;
-    uint enabledPoolsCount;
+    bool public ownershipTransferEnabled = true;
 
     IERC20Metadata public feesToken;
     ITreasury public treasury;
     IDivsDistributor public divsDistributor;
     IHashStratDAOTokenFarm public tokenFarm;
+
+
+    // the addresses of LP tokens of the HashStrat Pools and Indexes supported
+    address[] private poolsArray;
+    mapping(address => bool) private enabledPools;
+    uint private enabledPoolsCount;
+
+    address[] private indexesArray;
+    mapping(address => bool) private enabledIndexes;
+    uint private enabledIndexesCount;
 
 
     constructor(
@@ -61,7 +68,6 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
 
     //// Public View function ////
 
-    //// Pools Management ////
     function getPools() external view returns (address[] memory) {
         return poolsArray;
     }
@@ -70,7 +76,7 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
     function getEnabledPools() external view returns (address[] memory) {
         address[] memory enabled = new address[] (enabledPoolsCount);
         uint count = 0;
-        for (uint i = 0; i < poolsArray.length; i++) {
+        for (uint i=0; i<poolsArray.length; i++) {
             address poolAddress = poolsArray[i];
             if (enabledPools[poolAddress] == true) {
                 enabled[count] = poolAddress;
@@ -81,49 +87,27 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
         return poolsArray;
     }
 
-
-    function addPools(address[] memory poolAddresses) external onlyOwner {
-
-        address[] memory lptokenAddresses = new address[](poolAddresses.length);
-
-        for (uint i = 0; i<poolAddresses.length; i++) {
-            address poolAddress = poolAddresses[i];
-            if (enabledPools[poolAddress] == false) {
-                enabledPools[poolAddress] = true;
-                poolsArray.push(poolAddress);
-
-                lptokenAddresses[i] = address(IPoolV3(poolAddress).lpToken());
-                enabledPoolsCount++;
+    function getEnabledIndexes() external view returns (address[] memory) {
+        address[] memory enabled = new address[] (enabledIndexesCount);
+        uint count = 0;
+        for (uint i=0; i<indexesArray.length; i++) {
+            address indexAddress = indexesArray[i];
+            if (enabledIndexes[indexAddress] == true) {
+                enabled[count] = indexAddress;
+                count++;
             }
         }
 
-        tokenFarm.addLPTokens(lptokenAddresses);
+        return indexesArray;
     }
 
 
-    function removePools(address[] memory poolAddresses) external onlyOwner {
 
-        address[] memory lptokenAddresses = new address[](poolAddresses.length);
-
-        for (uint i = 0; i<poolAddresses.length; i++) {
-            address poolAddress = poolAddresses[i];
-            if (enabledPools[poolAddress] == true) {
-                enabledPools[poolAddress] = false;
-                
-                lptokenAddresses[i] = address(IPoolV3(poolAddress).lpToken());
-                enabledPoolsCount--;
-            }
-        }
-
-        tokenFarm.removeLPTokens(lptokenAddresses);
-    }
-
-
-    //// Public functions
+    //// Public functions ////
 
     // Collect fees from all Pools and transfer them to the Treasury
     function collectFees() public {
-        for (uint i = 0; i < poolsArray.length; i++) {
+        for (uint i=0; i<poolsArray.length; i++) {
             if (enabledPools[poolsArray[i]]) {
                 IPoolV3 pool = IPoolV3(poolsArray[i]);
                 uint before = feesToken.balanceOf(address(this));
@@ -141,7 +125,7 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
     // Returns the value of the LP tokens held in the pools
     function collectableFees() public view returns (uint) {
         uint total = 0;
-        for (uint i = 0; i < poolsArray.length; i++) {
+        for (uint i=0; i<poolsArray.length; i++) {
             if (enabledPools[poolsArray[i]]) {
                 IPoolV3 pool = IPoolV3(poolsArray[i]);
                 uint feeValue = pool.portfolioValue(address(pool));
@@ -154,8 +138,22 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
 
 
 
-    //// DAO operations
+    //// DAO operations ////
 
+    function setDivsPerc(uint divsPercentage) external onlyOwner {
+        require(divsPercentage >= 0 && divsPercentage <= (10 ** PERC_DECIMALS), "invalid percentage");
+        
+        divsPerc = divsPercentage;
+    }
+
+
+    // DivsDistributor operations
+    function setDivsDistributionInterval(uint blocks) external onlyOwner {
+        divsDistributor.setDivsDistributionInterval(blocks);
+    }
+
+
+    // Treasury operations
     function transferFunds(address to, uint amount) external onlyOwner {
         require (amount <= feesToken.balanceOf(address(treasury)) , "Excessive amount");
         if (amount > 0) {
@@ -165,34 +163,77 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
     }
 
 
-    function setDivsPerc(uint divsPercentage) external onlyOwner {
-        require(divsPercentage >= 0 && divsPercentage <= (10 ** PERC_DECIMALS), "invalid percentage");
-        
-        divsPerc = divsPercentage;
-    }
-
-
+    // Pool operations
     function setFeesPerc(address poolAddress, uint feesPerc) external onlyOwner {
         require(feesPerc <= MAX_POOL_FEE_PERC, "Fee percentage too high");
 
         IPoolV3(poolAddress).setFeesPerc(feesPerc);
     }
 
-
     function setSlippageThereshold(address poolAddress, uint slippage) external onlyOwner {
         IPoolV3(poolAddress).setSlippageThereshold(slippage);
     }
-
 
     function setStrategy(address poolAddress, address strategyAddress) external onlyOwner {
         IPoolV3(poolAddress).setStrategy(strategyAddress);
     }
 
-
     function setPoolUpkeepInterval(address poolAddress, uint interval) external onlyOwner {
         IPoolV3(poolAddress).setUpkeepInterval(interval);
     }
 
+
+    // Pools & Index management
+    function addPools(address[] memory poolAddresses) external onlyOwner {
+        for (uint i=0; i<poolAddresses.length; i++) {
+            address poolAddress = poolAddresses[i];
+            if (enabledPools[poolAddress] == false) {
+                enabledPools[poolAddress] = true;
+                poolsArray.push(poolAddress);
+                enabledPoolsCount++;
+            }
+        }
+
+        tokenFarm.addPools(poolAddresses);
+    }
+
+    function removePools(address[] memory poolAddresses) external onlyOwner {
+
+        for (uint i=0; i<poolAddresses.length; i++) {
+            address poolAddress = poolAddresses[i];
+            if (enabledPools[poolAddress] == true) {
+                enabledPools[poolAddress] = false;
+                enabledPoolsCount--;
+            }
+        }
+
+        tokenFarm.removePools(poolAddresses);
+    }
+
+    function addIndexes(address[] memory indexesAddresses) external onlyOwner {
+        for (uint i=0; i<indexesAddresses.length; i++) {
+            address indexAddress = indexesAddresses[i];
+            if (enabledIndexes[indexAddress] == false) {
+                enabledIndexes[indexAddress] = true;
+                indexesArray.push(indexAddress);
+                enabledIndexesCount++;
+            }
+        }
+
+        tokenFarm.addPools(indexesAddresses);
+    }
+
+    function removeIndexes(address[] memory indexesAddresses) external onlyOwner {
+        for (uint i=0; i<indexesAddresses.length; i++) {
+            address indexAddress = indexesAddresses[i];
+            if (enabledIndexes[indexAddress] == true) {
+                enabledIndexes[indexAddress] = false;
+                enabledIndexesCount--;
+            }
+        }
+
+        tokenFarm.removePools(indexesAddresses);
+    }
 
 
     //// AutomationCompatible
@@ -200,7 +241,6 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
     function setUpkeepInterval(uint _upkeepInterval) public onlyOwner {
         upkeepInterval = _upkeepInterval;
     }
-
 
     function checkUpkeep(bytes calldata /* checkData */) external view override returns (bool upkeepNeeded, bytes memory performData) {
         bool timeElapsed = (block.timestamp - lastUpkeepTimestamp) >= upkeepInterval;
@@ -233,6 +273,21 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
         }
 
         lastUpkeepTimestamp = block.timestamp;
+    }
+
+
+    ///// Ownership transfer Functionality   /////
+
+    function setOwnerships(address[] memory oldOwners, address newOwner) external onlyOwner {
+        require(ownershipTransferEnabled, "DAOOperations: Ownership transfer is disabled");
+
+        for (uint i=0; i<oldOwners.length; i++) {
+            IOwnable(oldOwners[i]).transferOwnership(newOwner);
+        }
+    }
+
+    function disableOwnershipTransfers() external onlyOwner {
+        ownershipTransferEnabled = false;
     }
 
 }

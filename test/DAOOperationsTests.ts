@@ -96,7 +96,6 @@ describe("DAOOperations", function () {
 	});
 
 
-
 	describe("#collectableFees", function () {
 
 		it("should return the fees amount when there are LP in the pools", async function () {
@@ -119,6 +118,7 @@ describe("DAOOperations", function () {
 		});
 	});
 
+
 	describe("#collectFees", function () {
 
 		it("should collect fees from pools and transfer the to Treasury", async function () {
@@ -133,6 +133,7 @@ describe("DAOOperations", function () {
 			
 		});
 	});
+
 
 	describe("#transferFunds", function () {
 
@@ -151,6 +152,46 @@ describe("DAOOperations", function () {
 		});
 	});
 
+
+	describe("#setOwnerships", function () {
+
+		it("transfer ownerhsip of owned contracts when ownerhsip transfer is enabled", async function () {
+			const { daoOperations } = await loadFixture(deployDAOOperationsFixture);
+			const [ _, addr1 ] = await ethers.getSigners();
+
+			// verity all pools are owned by DaoOperations
+			const pools = await daoOperations.getEnabledPools()
+			for (const poolAddress of pools) {
+				const pool = new Contract(poolAddress, abis["poolV3"], ethers.provider)
+
+				expect( await pool.owner() ).to.be.equal( daoOperations.address )
+			}
+
+			// transfer pools ownership to addr1
+			await daoOperations.setOwnerships(pools, addr1.address)
+
+			// verity new ownership
+			for (const poolAddress of pools) {
+				const pool = new Contract(poolAddress, abis["poolV3"], ethers.provider)
+
+				expect( await pool.owner() ).to.be.equal( addr1.address )
+			}
+		})
+
+		it("reverts with an error when ownerhsip transfer is disabled", async function () {
+			const { daoOperations } = await loadFixture(deployDAOOperationsFixture);
+			const [ _, addr1 ] = await ethers.getSigners();
+
+			// verity all pools are owned by DaoOperations
+			const pools = await daoOperations.getEnabledPools()
+
+			// disable  ownership to addr1
+			await daoOperations.disableOwnershipTransfers()
+
+			await expect( daoOperations.setOwnerships(pools, addr1.address) ).to.be.revertedWith("DAOOperations: Ownership transfer is disabled");
+		})
+	});
+
 	
 });
 
@@ -163,7 +204,6 @@ async function transferPoolsOwnership(poolAddresses: string[], to: string) {
 		params: [poolOwner],
 	});
 	const signer = await ethers.getSigner(poolOwner);
-	// const poolAddresses = [pools.pool01v3a.pool, pools.pool02v3a.pool, pools.pool03v3a.pool, pools.pool04v3a.pool, pools.pool05v3a.pool, pools.pool06v3a.pool]
 	for (const poolAddress of poolAddresses) {
 		const pool = new Contract(poolAddress, abis["poolV3"], ethers.provider)
 		await pool.connect(signer).transferOwnership(to) 

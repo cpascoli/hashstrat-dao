@@ -11,7 +11,7 @@ const { RPC_URL_POLYGON_MAIN, RPC_URL_GOERLI, ETHERSCAN_API_KEY, POLYGONSCAN_API
 
 const config: HardhatUserConfig = {
   solidity: {
-    version: "0.8.15",
+    version: "0.8.16",
     settings: {
       optimizer: {
         enabled: true,
@@ -24,7 +24,7 @@ const config: HardhatUserConfig = {
     hardhat: {
       forking: {
         url: RPC_URL_POLYGON_MAIN || "",
-        blockNumber: 34745600 // 34991120 // 34740813 // 34661181 // 34551779 // 34299625
+        blockNumber: 34745600 // 34991120
       }
     },
     goerli: {
