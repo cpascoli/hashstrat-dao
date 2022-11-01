@@ -21,12 +21,12 @@ import "./IHashStratDAOToken.sol";
  *
  */
 
-contract HashStratDAOTokenFarm is StakingPool  {
+contract HashStratDAOTokenFarm is StakingPool {
 
     event RewardPaid(address indexed user, uint256 reward);
 
-    uint public totalStaked; // T: sum of all active stake deposits
-    uint public rewardPerTokenStaked; // S: SUM(reward/T) - sum of all rewards distributed divided all active stakes
+    uint public totalStakedValue; // T: sum of the initial value of all active stakes
+    uint public rewardPerValueStaked; // S: SUM(reward/T) - sum of all rewards distributed divided all active stakes
     uint public lastUpdated;  // when the totalStakedWeight was last updated (after last stake was ended)
 
 
@@ -39,6 +39,7 @@ contract HashStratDAOTokenFarm is StakingPool  {
     }
 
     struct UserInfo {
+        uint stakedLPValue;    // the initial value of the LP staked
         uint userRewardPerTokenStaked;
         uint pendingRewards;
         uint rewardsPaid;
@@ -124,44 +125,47 @@ contract HashStratDAOTokenFarm is StakingPool  {
     }
 
     
-    function getStakedLP(address account) public view returns (uint) {
-       
-        address[] memory enabledLP = super.getLPTokens();
-
-        uint staked = 0;
-        for (uint i = 0; i < enabledLP.length; i++){
-            address lpToken = enabledLP[i];
-            staked += stakes[account][lpToken];
-        }
-        return staked;
-    }
-
-
-
+   
     //// Public Functions ////
 
     function startStake(address lpToken, uint amount) public override {
-        // uint periodId = getCurrentRewardPeriodId();
+
+        address pool = lptokenToPool[lpToken];
+        require(pool != address(0), "No pool found for LP token");
+
         uint periodId = getLastRewardPeriodId();
         RewardPeriod memory period = rewardPeriods[periodId-1];
-
         require(periodId > 0 && period.from <= block.timestamp, "No active reward period found");
+
+        uint stakedValue = IPoolV3(pool).lpTokensValue(amount);
 
         update();
         super.startStake(lpToken, amount);
 
-        // update total tokens staked
-        totalStaked += amount;
+        UserInfo storage userInfo = userInfos[msg.sender];  
+        userInfo.stakedLPValue += stakedValue;
+        totalStakedValue += stakedValue;
     }
 
 
     function endStake(address lpToken, uint amount) public override {
+
+        uint staked = getStakedBalance(msg.sender, lpToken);
+
+        // percentage of staked lp tokens that is being unstaked
+        uint percUnstake = amount <= staked ?  rewardPrecision * amount / staked  : rewardPrecision;
+
+        UserInfo storage userInfo = userInfos[msg.sender]; 
+        uint valueUnstaked = userInfo.stakedLPValue * percUnstake / rewardPrecision;
+
         update();
         super.endStake(lpToken, amount);
-
-        totalStaked -= amount;
         
+        userInfo.stakedLPValue -= (valueUnstaked <= userInfo.stakedLPValue) ? valueUnstaked : userInfo.stakedLPValue;
+        totalStakedValue -= (valueUnstaked <= totalStakedValue) ? valueUnstaked : totalStakedValue;
+
         claim();
+
     }
 
 
@@ -170,8 +174,8 @@ contract HashStratDAOTokenFarm is StakingPool  {
         if (periodId == 0) return 0;
 
         RewardPeriod memory period = rewardPeriods[periodId-1];
-        uint updatedRewardPerTokenStaked = calculateRewardDistribution(period);
-        uint reward = calculateReward(account, updatedRewardPerTokenStaked);
+        uint newRewardPerValueStaked = calculateRewardDistribution(period);
+        uint reward = calculateReward(account, newRewardPerValueStaked);
 
         UserInfo memory userInfo = userInfos[account];
         uint pending = userInfo.pendingRewards;
@@ -218,8 +222,10 @@ contract HashStratDAOTokenFarm is StakingPool  {
     //// INTERNAL FUNCTIONS ////
 
     function claim() internal {
+
         UserInfo storage userInfo = userInfos[msg.sender];
         uint rewardsToPay = userInfo.pendingRewards;
+
         if (rewardsToPay != 0) {
             userInfo.pendingRewards = 0;
 
@@ -295,55 +301,53 @@ contract HashStratDAOTokenFarm is StakingPool  {
 
 
     function update() internal {
+        
         uint periodId = getLastRewardPeriodId();
         if (periodId == 0) return;
 
         RewardPeriod storage period = rewardPeriods[periodId-1];
-        uint updatedRewardPerTokenStaked = calculateRewardDistribution(period);
+        uint newRewardPerValueStaked = calculateRewardDistribution(period);
 
-
-        // update pending rewards reward since rewardPerTokenStaked was updated
-        uint reward = calculateReward(msg.sender, updatedRewardPerTokenStaked);
+        // update pending rewards reward since rewardPerValueStaked was updated
+        uint reward = calculateReward(msg.sender, newRewardPerValueStaked);
         UserInfo storage userInfo = userInfos[msg.sender];
         userInfo.pendingRewards += reward;
-        userInfo.userRewardPerTokenStaked = updatedRewardPerTokenStaked;
+        userInfo.userRewardPerTokenStaked = newRewardPerValueStaked;
 
-        require(updatedRewardPerTokenStaked >= rewardPerTokenStaked, "Reward distribution should be monotonic increasing");
+        require(newRewardPerValueStaked >= rewardPerValueStaked, "Reward distribution should be monotonic increasing");
 
-        rewardPerTokenStaked = updatedRewardPerTokenStaked;
+        rewardPerValueStaked = newRewardPerValueStaked;
         lastUpdated = block.timestamp;
     }
 
 
-    // Returns the reward per token staked for all periods up to the 'period 'provided
+    // Returns the reward for one unit of value staked from 'lastUpdated' up to the 'period 'provided
     function calculateRewardDistribution(RewardPeriod memory period) internal view returns (uint) {
 
-        // calculate the updated average rate of the reward to be distributed since lastUpdated
+        // calculate an updated average rate of the reward/second to be distributed since lastUpdated
         uint rate = rewardRate(period);
 
+      
         // calculate the amount of additional reward to be distributed from 'lastUpdated' to min(block.timestamp, period.to)
         uint rewardIntervalEnd = block.timestamp > period.to ? period.to : block.timestamp;
         uint deltaTime = rewardIntervalEnd > lastUpdated ? rewardIntervalEnd - lastUpdated : 0;
         uint reward = deltaTime * rate; // the additional reward
 
         // S = S + r / T
-        uint newRewardPerTokenStaked = (totalStaked == 0)?  
-                                        rewardPerTokenStaked :
-                                        rewardPerTokenStaked + ( rewardPrecision * reward / totalStaked ); 
+        uint newRewardPerValueStaked = (totalStakedValue == 0)?  
+                                        rewardPerValueStaked :
+                                        rewardPerValueStaked + ( rewardPrecision * reward / totalStakedValue ); 
 
-        return newRewardPerTokenStaked;
+        return newRewardPerValueStaked;
     }
 
 
-    // calculates the additional reward for the 'account' based on the 'rewardDistributionPerToken' 
-    function calculateReward(address account, uint rewardDistributionPerToken) internal view returns (uint) {
-        if (rewardDistributionPerToken == 0) return 0;
+    // calculates the additional reward for the 'account' based on the 'rewardDistributionPerValue' 
+    function calculateReward(address account, uint rewardDistributionPerValue) internal view returns (uint) {
+        if (rewardDistributionPerValue == 0) return 0;
 
-        uint staked = getStakedLP(account);
         UserInfo memory userInfo = userInfos[account];
-        
-        uint reward = (staked * (rewardDistributionPerToken - userInfo.userRewardPerTokenStaked)) / rewardPrecision;
-
+        uint reward = (userInfo.stakedLPValue * (rewardDistributionPerValue - userInfo.userRewardPerTokenStaked)) / rewardPrecision;
         return reward;
     }
 

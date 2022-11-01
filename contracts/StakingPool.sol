@@ -4,23 +4,25 @@ pragma abicoder v2;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "./IPoolV3.sol";
+import "./IHashStratDAOTokenFarm.sol";
 
 
-contract StakingPool is Ownable {
+contract StakingPool is IHashStratDAOTokenFarm, Ownable {
 
     event Staked(address indexed user, address indexed lpTokenAddresses, uint amount);
     event UnStaked(address indexed user, address indexed lpTokenAddresses, uint256 amount);
     event Deposited(address indexed user, address indexed lpTokenAddress, uint256 amount);
     event Withdrawn(address indexed user, address indexed lpTokenAddress, uint256 amount);
 
-
-    // account_address -> (lp_token_address -> lp_token_balance)
-    mapping(address => mapping(address => uint256) ) public balances;
-
-    // the addresses of LP tokens of the HashStrat Pools and Indexes supported
-    address[] private lpTokensArray;
-    mapping(address => bool) internal enabledLPTokens;
-    uint internal enabledLPTokenCount = 0;
+ 
+    // the addresses of Pools and Indexes supported
+    address[] private poolsArray;
+    mapping(address => bool) internal enabledPools;
+    mapping(address => address) internal lptokenToPool;
+    
+    
+    uint internal enabledPoolsCount = 0;
 
     // users that deposited CakeLP tokens into their balances
     address[] private usersArray;
@@ -30,10 +32,12 @@ contract StakingPool is Ownable {
     // addresses that have active stakes
     address[] public stakers; 
 
+   // account_address -> (lp_token_address -> lp_token_balance)
+    mapping(address => mapping(address => uint256) ) private balances;
+
     // account_address => (lp_token_address => stake_balance)
-    mapping (address => mapping(address =>  uint)) public stakes;
+    mapping (address => mapping(address =>  uint)) private stakes;
  
-    // constructor() Wallet() {}
 
 
     //// Public View Functions ////
@@ -44,7 +48,7 @@ contract StakingPool is Ownable {
 
 
     function getStakedBalance(address account, address lpToken) public view returns (uint) {
-        if(enabledLPTokens[lpToken] == false) return 0;
+        if(lptokenToPool[lpToken] == address(0)) return 0;
 
         return stakes[account][lpToken];
     }
@@ -60,28 +64,43 @@ contract StakingPool is Ownable {
     }
 
 
-    // return the array of enabled LP tokens addresses
-    function getLPTokens() public view returns (address[] memory) {
-        address[] memory enabledTokens = new address[](enabledLPTokenCount);
+    // return the array of the addresses of the enabled pools
+    function getPools() public view returns (address[] memory) {
+        address[] memory enabed = new address[](enabledPoolsCount);
 
         uint j = 0;
-        for (uint i = 0; i<lpTokensArray.length; i++){
-            address lpToken = lpTokensArray[i];
-            if (enabledLPTokens[lpToken]) {
-                enabledTokens[j] = lpToken;
+        for (uint i = 0; i<poolsArray.length; i++){
+            address pool = poolsArray[i];
+            if (enabledPools[pool]) {
+                enabed[j] = pool;
                 j++;
             }
         }
 
-        return enabledTokens;
+        return enabed;
     }
+
+    function getLPTokens() public view returns (address[] memory) {
+        address[] memory enabed = new address[](enabledPoolsCount);
+        uint j = 0;
+        for (uint i = 0; i<poolsArray.length; i++){
+            address pool = poolsArray[i];
+            if (enabledPools[pool]) {
+                enabed[j] = address( IPoolV3(pool).lpToken() );
+                j++;
+            }
+        }
+
+        return enabed;
+    }
+        
 
 
     //// Public Functions ////
 
     function deposit(address lpAddress, uint256 amount) public {
         require(amount > 0, "Deposit amount should not be 0");
-        require(enabledLPTokens[lpAddress] == true, "LP Token not supported");
+        require(lptokenToPool[lpAddress] != address(0), "LP Token not supported");
 
         require(
             IERC20(lpAddress).allowance(msg.sender, address(this)) >= amount, "Insufficient allowance"
@@ -89,7 +108,7 @@ contract StakingPool is Ownable {
 
         balances[msg.sender][lpAddress] += amount;
 
-        // remember addresses that deposited LP tokens
+        // remember accounts that deposited LP tokens
         if (existingUsers[msg.sender] == false) {
             existingUsers[msg.sender] = true;
             usersArray.push(msg.sender);
@@ -102,7 +121,7 @@ contract StakingPool is Ownable {
 
 
     function withdraw(address lpAddress, uint256 amount) public {
-        require(enabledLPTokens[lpAddress] == true, "LP Token not supported");
+        require(lptokenToPool[lpAddress] != address(0), "LP Token not supported");
         require(balances[msg.sender][lpAddress] >= amount, "Insufficient token balance");
 
         balances[msg.sender][lpAddress] -= amount;
@@ -113,7 +132,7 @@ contract StakingPool is Ownable {
 
 
     function startStake(address lpToken, uint amount) virtual public {
-        require(enabledLPTokens[lpToken] == true, "LP Token not supported");
+        require(lptokenToPool[lpToken] != address(0), "LP Token not supported");
         require(amount > 0, "Stake must be a positive amount greater than 0");
         require(balances[msg.sender][lpToken] >= amount, "Not enough tokens to stake");
 
@@ -126,7 +145,7 @@ contract StakingPool is Ownable {
 
 
     function endStake(address lpToken, uint amount) virtual public {
-        require(enabledLPTokens[lpToken] == true, "LP Token not supported");
+        require(lptokenToPool[lpToken] != address(0), "LP Token not supported");
         require(stakes[msg.sender][lpToken] >= amount, "Not enough tokens staked");
 
         // return lp tokens to lp token balance
@@ -152,25 +171,26 @@ contract StakingPool is Ownable {
 
     //// ONLY OWNER FUNCTIONALITY ////
 
-    function addLPTokens(address[] memory lpTokenAddresses) external onlyOwner {
-
-        for (uint i = 0; i<lpTokenAddresses.length; i++) {
-            address lpToken = lpTokenAddresses[i];
-            if (lpToken != address(0) && enabledLPTokens[lpToken] == false) {
-                enabledLPTokens[lpToken] = true;
-                lpTokensArray.push(lpToken);
-                enabledLPTokenCount++;
+    function addPools(address[] memory poolsAddresses) external override onlyOwner {
+        for (uint i = 0; i<poolsAddresses.length; i++) {
+            address pool = poolsAddresses[i];
+            if (pool != address(0) && enabledPools[pool] == false) {
+                enabledPools[pool] = true;
+                lptokenToPool[ address(IPoolV3(pool).lpToken()) ] = pool;
+                poolsArray.push(pool);
+                enabledPoolsCount++;
             }
         }
     }
 
 
-    function removeLPTokens(address[] memory lpTokenAddresses) external onlyOwner {
-        for (uint i = 0; i<lpTokenAddresses.length; i++) {
-            address lpToken = lpTokenAddresses[i];
-            if (lpToken != address(0) && enabledLPTokens[lpToken] == true) {
-                enabledLPTokens[lpToken] = false;
-                enabledLPTokenCount--;
+    function removePools(address[] memory poolsAddresses) external override onlyOwner {
+        for (uint i = 0; i<poolsAddresses.length; i++) {
+            address pool = poolsAddresses[i];
+            if (pool != address(0) && enabledPools[pool] == true) {
+                enabledPools[pool] = false;
+                lptokenToPool[ address(IPoolV3(pool).lpToken()) ] = address(0);
+                enabledPoolsCount--;
             }
         }
     }
