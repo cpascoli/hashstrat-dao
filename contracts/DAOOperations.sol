@@ -32,6 +32,7 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
     uint public lastUpkeepTimestamp;
 
     bool public ownershipTransferEnabled = true;
+    bool public updatesEnabled = true; 
 
     IERC20Metadata public feesToken;
     ITreasury public treasury;
@@ -164,6 +165,7 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
 
 
     // Pool operations
+
     function setFeesPerc(address poolAddress, uint feesPerc) external onlyOwner {
         require(feesPerc <= MAX_POOL_FEE_PERC, "Fee percentage too high");
 
@@ -180,6 +182,17 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
 
     function setPoolUpkeepInterval(address poolAddress, uint interval) external onlyOwner {
         IPoolV3(poolAddress).setUpkeepInterval(interval);
+    }
+
+    // update dependent contracts
+    function setDivDistributor(address divDistributorAddress) external onlyOwner {
+        require (updatesEnabled, "DAOOperations: updates are disabled");
+        divsDistributor = IDivsDistributor(divDistributorAddress);
+    }
+
+    function setTreasury(address treasuryAddress) external onlyOwner {
+        require (updatesEnabled, "DAOOperations: updates are disabled");
+        treasury = ITreasury(treasuryAddress);
     }
 
 
@@ -288,6 +301,10 @@ contract DAOOperations is Ownable, AutomationCompatibleInterface {
 
     function disableOwnershipTransfers() external onlyOwner {
         ownershipTransferEnabled = false;
+    }
+
+    function disableUpdates() external onlyOwner {
+        updatesEnabled = false;
     }
 
 }
