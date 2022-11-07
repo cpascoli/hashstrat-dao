@@ -34,8 +34,9 @@ contract DivsDistributor is Ownable, IDivsDistributor {
     IERC20Metadata immutable public feesToken;
 
     uint public totalDivsPaid;
+    uint public minDistributionAmount;
     DistributionInterval[] public distributionIntervals;
-    
+
 
     struct DistributionInterval {
         uint id;
@@ -52,6 +53,8 @@ contract DivsDistributor is Ownable, IDivsDistributor {
     constructor(address feesTokenAddress, address hstTokenAddress) {
         feesToken = IERC20Metadata(feesTokenAddress);
         hstToken = IHashStratDAOToken(hstTokenAddress);
+
+        minDistributionAmount = 10 ** feesToken.decimals();
     }
 
 
@@ -108,7 +111,7 @@ contract DivsDistributor is Ownable, IDivsDistributor {
     ///// IDivsDistributor
     
     function canCreateNewDistributionInterval() public view returns (bool) {
-        return feesToken.balanceOf(address(this)) > 0 &&
+        return feesToken.balanceOf(address(this)) >= minDistributionAmount &&
                (distributionIntervals.length == 0 || block.number > distributionIntervals[distributionIntervals.length-1].to);
     }
 
@@ -133,6 +136,12 @@ contract DivsDistributor is Ownable, IDivsDistributor {
     function setDivsDistributionInterval(uint blocks) public onlyOwner {
         require (blocks >= MIN_BLOCKS_INTERVAL && blocks <= MAX_BLOCKS_INTERVAL, "Invalid payment interval");
         paymentInterval = blocks;
+    }
+
+    function setMinDistributionAmount(uint amount) public onlyOwner {
+        require (amount > 0, "Invalid amount");
+
+        minDistributionAmount = amount;
     }
 
 }

@@ -17,9 +17,7 @@ contract Treasury is ITreasury, Ownable {
 
     event FundsTransferred(address indexed recepient, uint amount);
 
-
     IERC20Metadata public paymentToken;
-
     Payment[] public payments;
 
     struct Payment {
@@ -28,7 +26,6 @@ contract Treasury is ITreasury, Ownable {
         uint amount;
         address recepient;
     }
-
 
     constructor(address tokenAddress) {
         paymentToken = IERC20Metadata(tokenAddress);
