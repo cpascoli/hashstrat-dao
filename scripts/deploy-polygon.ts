@@ -7,18 +7,61 @@ import abis from "./abis/abis.json";
 const usdcAddress = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'
 
 
-const hashStratDAOTokenAddress = '0x77Ee22B63176DB8D904EF4aB5A4492BB700A8b39'
-const hashStratDAOTokenFarmAddress = '0x08487dBb81Fcb2420b4C996f10E6B6DA9f37EB05'
-const treasuryAddress = '0x645216B9Ae8e11bd3Fb997fA22753F1288094197'
-const divsDistributorAdddress = '0x35c1D11D1A28Aa454386C9A13dFa7dA773caFA1F'
+const hashStratDAOTokenAddress = '0x969D08DaA45663b6066a172b8Ea57cd1F9d5A3C9'
+const hashStratDAOTokenFarmAddress = '0xF3515ED3E4a93185ea16D11A870Cf6Aa65a41Ec7'
+const treasuryAddress = '0xD54085586F2eA6080e5e7cc3D6c022A2AEC47f3c'
+const divsDistributorAdddress = '0x5087950307FBE0305CBeC729F752215ad6034f80'
+const daoOperations = '0x7d49433360930dDed0B118fA0C9cAF9a38D18155'
+
+const timelockAddress = '0x50BeD9c1D6f47B3fB580179a2B8a855CD62b019b'
+const governorAddress = '0xEEE17dd25c6ac652c434977D291b016b9bA61a1A'
+
+const timelockDelay = 43200  			  //// In blocks (approximately 1 day)
+const initialVotingDelay = 0			  //// Can vote immediately on a new proposal
+const initialVotingPeriod =  2 * 43200    //// in blocks (approximately 2 days)
+const initialProposalThreshold = 1000     //// 1000 HST tokens required to create a proposal
+const initialQuorumFraction = 50  		  //// 50% quorum
 
 
 async function main() {
-
 	await depolyHashStratDAOTokenAndFarm()
-	await addLPTokensToFarm(hashStratDAOTokenFarmAddress)
-	await deployDivDistributor(usdcAddress, hashStratDAOTokenAddress)
+	await deployTreasuryAndDivsDistributor(usdcAddress, hashStratDAOTokenAddress)
 	await deployDAOOperations(usdcAddress, treasuryAddress, divsDistributorAdddress, hashStratDAOTokenFarmAddress)
+	await addPoolsAndIndexesToDaoOperations(daoOperations)
+	await deployGovernor(hashStratDAOTokenAddress, timelockDelay, initialVotingDelay, initialVotingPeriod, initialProposalThreshold, initialQuorumFraction)
+}
+
+
+const deployGovernor = async (  hashStratDAOTokenAddress: string,
+								timelockDelay: number, 
+								initialVotingDelay: number, 
+								initialVotingPeriod: number, 
+								initialProposalThreshold: number,
+								initialQuorumFraction: number,
+								) => {
+
+		// Deploy TimelockController without any proposers. 
+		// At deployment the deployer account receives an admin role that can be used to add a proposer later (see the TimelockController Roles docs section).
+		// A common use case is to position TimelockController as the owner of a smart contract, with a DAO (Governor) as the sole proposer.
+		const HashStratTimelockController = await ethers.getContractFactory("HashStratTimelockController");
+		const timelockController = await HashStratTimelockController.deploy(timelockDelay)
+		await timelockController.deployed()
+		console.log("HashStratTimelockController deployed at address ", timelockController.address)
+
+		// Deploy Governor with GovernorTimelockControl, connected to the timelock that was just deployed.
+		const HashStratGovernor = await ethers.getContractFactory("HashStratGovernor");
+		const hashStratGovernor = await HashStratGovernor.deploy(
+			hashStratDAOTokenAddress, 
+			timelockController.address, 
+			initialVotingDelay, 
+			initialVotingPeriod,
+			initialProposalThreshold,
+			initialQuorumFraction
+		)
+		await hashStratGovernor.deployed()
+
+		console.log("HashStratGovernor deployed at address ", hashStratGovernor.address)
+
 }
 
 
@@ -57,9 +100,8 @@ const depolyHashStratDAOTokenAndFarm = async () => {
 
 
 
-const deployDivDistributor = async (usdcAddress: string, hashStratDAOTokenAddress: string) => {
+const deployTreasuryAndDivsDistributor = async (usdcAddress: string, hashStratDAOTokenAddress: string) => {
 
-	///////  Deploy Governance :
 	console.log("Starting deployment of Treasury on POLYGON")
 
 	const Treasury = await ethers.getContractFactory("Treasury");
@@ -85,16 +127,25 @@ const deployDAOOperations = async (usdcAddress: string, treasuryAddress: string,
 	const daoOperations = await DAOOperations.deploy(usdcAddress, treasuryAddress, divsDistributorAdddress, tokenFarmAddress)
 	await daoOperations.deployed()
 
-	// DAOOperations should own Treasury and hashStratDAOTokenFarm
+	console.log("DAOOperations deployed to address: ", daoOperations.address)
+
+
+	// // DAOOperations should own Treasury and hashStratDAOTokenFarm
+	// const treasury = new Contract(treasuryAddress, abis['treasury'], ethers.provider)
 	// await treasury.transferOwnership(daoOperations.address)
+	// console.log("Treasury ownership transferred to DaoOperations: ", daoOperations.address)
+
+	// const hashStratDAOTokenFarm = new Contract(tokenFarmAddress, abis['hst_farm'], ethers.provider)
 	// await hashStratDAOTokenFarm.transferOwnership(daoOperations.address)
-
-	// Add existing Pools to DAOOperations 
-	const poolAddresses = [pools.pool01v3a.pool, pools.pool02v3a.pool, pools.pool03v3a.pool, pools.pool04v3a.pool, pools.pool05v3a.pool, pools.pool06v3a.pool]
-	await daoOperations.addPools(poolAddresses)
+	// console.log("TokenFarm ownership transferred to DaoOperations: ", daoOperations.address)
 
 
-	//await transferPoolsOwnership(poolAddresses, daoOperations.address)
+	// // Add existing Pools & Indexes to DAOOperations & DAOTokenFarm
+	// const poolAddresses = [pools.pool01v3a.pool, pools.pool02v3a.pool, pools.pool03v3a.pool, pools.pool04v3a.pool, pools.pool05v3a.pool, pools.pool06v3a.pool]
+	// await daoOperations.addPools(poolAddresses)
+
+	// const indexAddresses = [pools.index01v3a.pool, pools.index02v3a.pool, pools.index03v3a.pool]
+	// await daoOperations.addIndexes(indexAddresses)
 
 }
 
@@ -102,30 +153,30 @@ const deployDAOOperations = async (usdcAddress: string, treasuryAddress: string,
 
 /// Helpers
 
-const addLPTokensToFarm = async (farmAddress: string) => {
+const addPoolsAndIndexesToDaoOperations = async (daoOperationsAddr: string) => {
 
 	const [ owner ] = await ethers.getSigners();
+	const daoOperations = new Contract(daoOperationsAddr, abis['dao_operations'], ethers.provider)
+	
+	const poolsAddresses = getPoolsAddresses("pool")
+	console.log(">>> adding poolsAddresses", poolsAddresses)
+	await daoOperations.connect(owner).addPools(poolsAddresses)
+	console.log(">>> added Pools to DaoOperations: ", await daoOperations.getEnabledPools())
 
-	const hashStratDAOTokenFarm = new Contract(farmAddress, abis['farm'], ethers.provider)
-	const lpaddresses = getPoolLPTokenAddreses()
-	console.log(">>> adding LP tokens to HashStratDAOTokenFarm: ", lpaddresses)
-
-	await hashStratDAOTokenFarm.connect(owner).addLPTokens(lpaddresses)
-
-	console.log(">>> added LP tokens to HashStratDAOTokenFarm: ", await hashStratDAOTokenFarm.getLPTokens())
+	const indexesAddresses = getPoolsAddresses("index")
+	console.log(">>> adding indexesAddresses", indexesAddresses)
+	await daoOperations.connect(owner).addIndexes(indexesAddresses)
+	console.log(">>> added Indexes to DaoOperations: ", await daoOperations.getEnabledIndexes())
 }
 
-const getPoolAddreses = () : string[] => {
-	return Object.keys(pools).map(poolId => {
-		const poolInfo = pools[poolId as keyof typeof pools ]
+
+
+
+const getPoolsAddresses = (keyPrefix: string): string[] => {
+	
+	return Object.keys(pools).filter( key => key.startsWith(keyPrefix) ).map(poolId => {
+		const poolInfo = pools[poolId as keyof typeof pools]
 		return poolInfo["pool"] as string
-	});
-}
-
-const getPoolLPTokenAddreses = () : string[] => {
-	return Object.keys(pools).map(poolId => {
-		const poolInfo = pools[poolId as keyof typeof pools ]
-		return poolInfo["pool_lp"] as string
 	});
 }
 
