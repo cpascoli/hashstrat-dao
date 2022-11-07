@@ -522,6 +522,59 @@ describe("HashStratDAOTokenFarm", function () {
 	})
 
 
+	it(`Given Three users,
+		when they stake some LP tokens for different, overlapping intervals beyond all reward periods,
+		then the reward received will not exceed the token max supply`, async function () {
+
+			const [addr1, addr2, addr3] = await ethers.getSigners();
+			const { usdc, hashStratDAOTokenFarm, hashStratDAOToken, pool1, pool1LP } = await loadFixture(deployTokenAndFarm);
+
+			const amount1 = 500 * 10 ** 6
+			const amount2 = 300 * 10 ** 6
+			const amount3 = 200 * 10 ** 6
+			await transferFunds(amount1, addr1.address)
+			await transferFunds(amount2, addr2.address)
+			await transferFunds(amount3, addr3.address)
+
+			// // Wait 1y
+			await waitDays(365)
+
+			const lpstaked1 = await depositAndStake(addr1, amount1, usdc, pool1, pool1LP, hashStratDAOTokenFarm)
+			const lpstaked2 = await depositAndStake(addr2, amount2, usdc, pool1, pool1LP, hashStratDAOTokenFarm)
+			const lpstaked3 = await depositAndStake(addr3, amount3, usdc, pool1, pool1LP, hashStratDAOTokenFarm)
+
+			// Wait 20 (double the duration of the token distribution)
+			await waitDays(20 * 365)
+
+			const claimableRewardAddr1 = fromWei(await hashStratDAOTokenFarm.claimableReward(addr1.address))
+			const claimableRewardAddr2 = fromWei(await hashStratDAOTokenFarm.claimableReward(addr2.address))
+			const claimableRewardAddr3 = fromWei(await hashStratDAOTokenFarm.claimableReward(addr3.address))
+
+			const expectedFarmed1 = 1_000_000 * 5 / 10 / 2
+			const expectedFarmed2 = 1_000_000 * 3 / 10 / 2
+			const expectedFarmed3 = 1_000_000 * 2 / 10 / 2
+
+			expect(claimableRewardAddr1).to.be.approximately(expectedFarmed1, 100);
+			expect(claimableRewardAddr2).to.be.approximately(expectedFarmed2, 100);
+			expect(claimableRewardAddr3).to.be.approximately(expectedFarmed3, 100);
+		
+			// addr1, addr2, addr3 end stake and withdraw
+			await hashStratDAOTokenFarm.connect(addr1).endStakeAndWithdraw(pool1LP.address, lpstaked1)
+			await hashStratDAOTokenFarm.connect(addr2).endStakeAndWithdraw(pool1LP.address, lpstaked2)
+			await hashStratDAOTokenFarm.connect(addr3).endStakeAndWithdraw(pool1LP.address, lpstaked3)
+
+			// get the amount of tokens farmed
+			const tokensFarmed1 = fromWei(await hashStratDAOToken.balanceOf(addr1.address))
+			const tokensFarmed2 = fromWei(await hashStratDAOToken.balanceOf(addr2.address))
+			const tokensFarmed3 = fromWei(await hashStratDAOToken.balanceOf(addr3.address))
+
+			// users should have farmed the expected tokens
+			expect(tokensFarmed1).to.be.approximately(expectedFarmed1, 100);
+			expect(tokensFarmed2).to.be.approximately(expectedFarmed2, 100);
+			expect(tokensFarmed3).to.be.approximately(expectedFarmed3, 100);
+
+		});
+
 });
 
 
